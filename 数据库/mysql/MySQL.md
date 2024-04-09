@@ -684,29 +684,196 @@ INSERT INTO tab_test SELECT * FROM tab_test
 
 #### 合并查询
 
+介绍有时在实际应用中，为了合并多个select语句的结果，可以使用集合操作符号 union,union all
+
+**union all**
+
+不会去重，只是简单合并
+
+**union**
+
+会自动去重合并 其实就是 并集-交集
+
+#### 外连接 where->on
+
+现有需求
+
+**列出部门名称和这些部门的员工信息(名字和工作)，同时列出那些没有员工的部门。**
+
+如果使用传统多表查询
+
+```sql
+SELECT DNAME,ENAME,JOB
+		FROM emp,dept
+		WHERE emp.DEPTNO=dept.DEPTNO
+		ORDER BY DNAME ASC
+```
+
+发现只有三个部门，实际上有四个部门，只不过第四个部门没有员工
+
+**因为where子句是根据关联条件，显示所有匹配记录，匹配不上的，不显示**
+
+这时，我们就可以使用外连接来完成
+
+**外连接**
+
+* 左外连接（如果**左侧的表完全显示**我们就说是左外连接）
+  * `select .. from 表1 left join 表2 on 条件 [表1:就是左表 表2:就是右表]`
+* 右外连接（如果**右侧的表完全显示**我们就说是右外连接）
+  * `select .. from 表1 right join 表2 on 条件[表1:就是左表 表2:就是右表]`
+
+至此，就可以完成上面的需求了
+
+```sql
+SELECT DNAME,ENAME,JOB
+		FROM emp RIGHT JOIN dept
+		ON emp.DEPTNO=dept.DEPTNO
+		ORDER BY DNAME ASC
+```
+
+## Mysql约束
+
+约束用于确保数据库的数据**满足特定的规则**。
+
+在mysql中，约束包括：
+
+* not null 非空
+* unique 唯一
+* primary key 主键
+* foreign key 外键
+* check 检查
+
+### 主键 primary key
+
+用于唯一的标示表行的数据，**当定义主键约束后，该列不能重复**
+
+```
+字段名 字段类型 primary key
+```
+
+**注意事项：**
+
+* primary key不能重复而且不能为null
+
+* 一张表最多只能有一个主键，但可以是**复合主键(字段定义时不指定，最后指定如 primary key(id,name))**
+
+  * ```sql
+    CREATE TABLE t6 (
+        id INT, 
+        `name` VARCHAR(32),
+        age INT ,
+        PRIMARY KEY(id,`name`)
+    )
+    ```
+
+* 主键的指定方式有两种
+
+  * 直接在字段名后指定 `字段名 primakry key`
+  * 在表定义最后写`primary key(列名)`
+
+* 使用`desc 表名`，可以看到primary key的情况
+
+### 外键 foreign key
+
+用于定义主表和从表之间的关系：
+
+* 外键约束要定义在从表上，主表则必须具有主键约束或是unique约束
+* 当定义外键约束后，要求**外键列数据必须在主表的主键列存在或是为null**
+
+![在这里插入图片描述](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/103bf578fc9545878701988a9c307c66.png)
+
+```sql
+FOREIGN KEY(本表字段名）REFERENCES 主表名（主键名或unique字段名）
+            
+-- 创建主表 my_class
+CREATE TABLE my_class (
+	id INT PRIMARY KEY,#班级编号
+	`name` VARCHAR(32) NOT NULL DEFAULT ''
+); 
+
+-- 创建从表
+CREATE TABLE my_stu (
+	id INT PRIMARY KEY, #学生编号
+	`name` VARCHAR(32) NOT NULL DEFAULT '',
+	class_id INT, #对应的班级编号
+	FOREIGN KEY(class_id) REFERENCES my_class(id)
+);  
+```
+
+**注意：**
+
+* 外键指向的表的字段， 要求是**primary key或者是unique**
+* **表的类型是 innodb** , 这样的表才支持外键
+* 外键字段的类型要和主键字段的**类型一致**(长度可以不同)
+* 外键字段的值，必须在主键字段中出现过，或者为null [前提是外键字段允许为nul]
+* 一旦建立主外键的关系，数据不能随意删除，需要**先删除主表对应的所有从表的外键约束的字段，才可以删除主表字段**
+
+### 非空 not null
+
+如果在列上定义了notnull,那么当插入数据时，必须为列提供数据。
+
+```
+字段名 字段类型 not null
+```
+
+### 唯一 unique
+
+当定义了唯一约束后，该列值是不能重复的.。
+
+```
+字段名 字段类型 unique
+```
+
+**注意：**
+
+* 如果未定义非空，实际上**可以存在多个null**
+
+### check 检查
+
+**用于强制行数据必须满足的条件**。
+
+假定在sal列上定义了check约束，并要求sal列值在1000～2000之间，如果不再1000～2000之间就会提示出错。
+
+oracle和sqlserver均支持check，**mysql5.7不支持check，只做语法校验，但不会生效，8.0.16后支持**
+
+```
+列名 类型 check (check条件)
+```
+
+### 自增
+
+在某张表中，存在一个id列（整数），我们希望在添加记录的时候该列从1开始，自动的增长，怎么处理？
+
+```sql
+字段名  整型   primary key auto_increment 
+```
+
+**自增长使用细节**
+
+* 一般来说自增长是和primary key配合使用的
+* 自增长也可以单独使用[但是需要配合一个unique]
+* 自增长修饰的字段为整数型的(虽然小数也可以，但是非常非常少这样使用）
+* 自增长默认从1开始，你也可以通过如下命令修改
+  * `alter table 表名 auto_increment =新的开始值`;
+* 如果你添加数据时，给自增长字段(列)指定了值，则以指定的值为准
+
+## Mysql索引
 
 
 
+## Mysql事务
 
 
 
+## Mysql存储引擎
 
 
 
+## Mysql视图
 
 
 
-
-
-
-
-
-
-
-
-
-
-
+## Mysql用户管理
 
 
 
