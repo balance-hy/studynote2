@@ -465,3 +465,116 @@ SpringBoot的事务注解，因为多张表，我们希望一个service的操作
 具体配置步骤可以参照
 
 > https://www.bilibili.com/video/BV1m84y1w7Tb?p=199&spm_id_from=pageDriver&vd_source=17542f416e2251679b4c28b8e3f5e220
+
+## HttpClient
+
+HttpClient是Apache的一个子项目，是高效的、功能丰富的支持HTTP协议的**客户端编程工具包**
+
+**构造和发送 Http请求到第三方获得服务**
+
+![image-20240410191055270](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240410191055270.png)
+
+导入依赖
+
+```xml
+<dependency>    
+    <groupId>org.apache.httpcomponents</groupId>    
+    <artifactId>httpclient</artifactId>    
+    <version>4.5.13</version>
+</dependency>
+```
+
+**核心API：**
+
+- HttpClient 
+  - 使用其发送请求
+- HttpClients 
+  - 创建HttpClient 对象
+- CloseableHttpClient 
+  - 具体的 HttpClient  实现类
+- HttpGet
+  - get请求
+- HttpPost
+  - post请求
+
+**发送请求步骤：**
+
+- 创建HttpClient对象
+- 创建Http请求对象 （HttpGet/HttpPost）
+- 调用HttpClient的execute方法发送请求
+
+### get
+
+```java
+@SpringBootTest
+public class HttpClientTest {
+
+    //通过HttpClient发送get方式请求
+    @Test
+    public void testHttpClient() throws IOException {
+        //创建HttpClient对象
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+
+        //构建请求对象
+        HttpGet httpGet = new HttpGet("https://api.map.baidu.com/geocoding/v3/?address=" +
+                "北京市海淀区上地十街10号&output=json&ak=UEBQm9c3KZ5LrsO2C2qsOAs1eSdLvlzM");
+
+        //发送请求
+        CloseableHttpResponse response = httpClient.execute(httpGet);
+        //输出服务端返回状态码
+        System.out.println(response.getStatusLine());
+
+        //获取具体响应信息
+        HttpEntity entity = response.getEntity();
+        //解析
+        String body = EntityUtils.toString(entity);
+        System.out.println(body);
+
+        //关闭资源
+        response.close();
+        httpClient.close();
+    }
+}
+```
+
+### post
+
+```java
+//通过HttpClient发送post方式请求
+@Test
+public void testHttpClientPost() throws IOException {
+    //创建HttpClient对象
+    CloseableHttpClient httpClient = HttpClients.createDefault();
+
+    //构建请求对象
+    HttpPost httpPost = new HttpPost("https://api.map.baidu.com/geocoding/v3/?address=" +
+                                     "北京市海淀区上地十街10号&output=json&ak=UEBQm9c3KZ5LrsO2C2qsOAs1eSdLvlzM");
+
+    //注意 post 方式 若需 传递 json 格式数据
+    JSONObject jsonObject = new JSONObject();
+    jsonObject.put("username", "balance");
+    jsonObject.put("password", "123456");
+
+    StringEntity stringEntity = new StringEntity(jsonObject.toString());
+
+    //设置请求的编码方式
+    stringEntity.setContentEncoding("UTF-8");
+    stringEntity.setContentType("application/json");
+
+    httpPost.setEntity(stringEntity);
+
+    //发送请求
+    CloseableHttpResponse response = httpClient.execute(httpPost);
+    //输出服务端返回状态码
+    System.out.println(response.getStatusLine());
+
+    //获取具体响应信息
+    HttpEntity entity = response.getEntity();
+    //解析
+    EntityUtils.toString(entity);
+
+    //关闭资源
+    response.close();
+    httpClient.close();
+}
+```

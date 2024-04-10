@@ -859,9 +859,221 @@ oracle和sqlserver均支持check，**mysql5.7不支持check，只做语法校验
 
 ## Mysql索引
 
+说起提高数据库性能，索引是最物美价廉的东西了。不用加内存，不用改程序，不用调sql，查询速度就可能提高百倍千倍。
 
+```sql
+SELECT * FROM emp WHERE ename='axJxC' #未添加索引前查询时间5.7秒
+#创建索引
+-- create index 索引名 on 表名(字段列名)
+CREATE INDEX ename_index ON emp(ename) #创建索用了25秒
+SELECT * FROM emp WHERE ename='axJxC' #创建索引后查询时间0.002秒
+```
+
+提出问题：是不是建立一个索引就能解决所有的问题？ename 上没有建立索引会怎样？
+
+**索引只对当前列生效，对未建立索引的列不生效，建立索引后，占用的空间变大**
+
+### 索引机制
+
+* **没有索引为什么会慢**？
+  ​ 因为要进行**全表扫描**。
+
+* **使用索引为什么会快**？
+  ​ 形成一个**索引的数据结构**，比如二叉树（只是举例）。
+
+**INNODB引擎默认索引类型为 B+ 树**
+
+![在这里插入图片描述](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/5f389b1300994d859e2e6dd99daf729a.png)
+
+#### 索引的代价
+
+1. **磁盘占用** 即占用空间变大，空间换时间
+2. 增加**dml**(Data Manipulation Language 即update delete insert)语句的**效率影响**。因为需要重新维护索引
+   但在我们项目中， select[**90%**]比update，delete，insert**[10%**]操作多。
+
+### 索引的类型
+
+1. 主键索引，**主键自动的为主索引(类型Primary key)**
+
+2. 唯一索引(UNIQUE)  
+
+   1. ```sql
+      id int unique,  -- id唯一，同时也是索引，称为unique索引
+      ```
+
+3. 普通索引(INDEX)
+
+4. 全文索引(FULLTEXT) [适用于MyISAM] 一篇文章搜索某个单词
+   开发中考虑使用：全文搜索Solr 和 ElasticSearch (ES)
+
+5. 查询索引：**SHOW INDEX FROM 表名**
+
+### 索引的操作
+
+#### 索引创建
+
+```sql
+#创建新表时没有添加主键
+CREATE TABLE t13(
+id INT ,
+`name` VARCHAR(32)
+)
+#添加主键索引方法:在创建表的时候没有添加,就另外alter
+ALTER TABLE t13 ADD PRIMARY KEY (id)
+
+-- 添加唯一索引
+#方法1
+CREATE UNIQUE INDEX id_index ON t13(id)
+
+#方法2:在创建表的时候添加unique关键字
+CREATE TABLE t14(
+id INT UNIQUE,
+`name` VARCHAR(32) 
+)
+
+#查询索引
+SHOW INDEXES FROM t13   # id是主键索引,name是唯一索引
+
+-- 添加普通索引
+# 方法1
+CREATE INDEX id_index ON t12(id)
+# 方法2
+ALTER TABLE t12 ADD INDEX id_index (id)
+```
+
+如果某列的值，不会重复，则优先考虑使用 unique 索引，否则使用普通索引
+
+#### 索引删除
+
+```sql
+-- 删除索引演示
+#删除普通索引
+DROP INDEX id_index ON t12
+
+#删除唯一索引 同理
+DROP INDEX id_index ON t12
+
+#删除主键索引
+#细节:以这种方式 drop index primary key on t12 是删除不了主键索引
+ALTER TABLE t12 DROP PRIMARY KEY #正确删除主键索引的方式
+```
+
+#### 索引查找
+
+```sql
+-- 查询索引
+#方法1
+SHOW INDEX FROM 表名
+#方法2
+SHOW INDEXES FROM 表名
+#方法3
+SHOW KEYS FROM 表名
+#方法4 :不够精确
+DESC 表名
+```
+
+#### 索引修改
+
+修改索引就是先删除原有，再添加就可以
+
+### 索引使用场合
+
+- 较频繁的作为查询条件字段应该创建索引，例如序号
+- **唯一性太差的字段不适合单独创建索引**，即使频繁作为查询条件，例如性别
+- **更新非常频繁的字段不适合创建索引**，例如登录次数
+- 不会出现在WHERE子句中字段不该创建索引
 
 ## Mysql事务
+
+**什么是事务**
+
+- 事务用于保证数据的一致性，它由一组相关的DML语句组成， 该组的dml语句**要么全部成功，要么全部失败**。如: 转账就要用事务来处理，用以保证数据的一致性。
+
+- 数据库的**事务（Transaction）**是一种机制、一个操作序列，包含了一组数据库操作命令。事务把所有的命令作为一个整体一起向系统提交或撤销操作请求，即这一组数据库命令要么都执行，要么都不执行，因此事务是一个不可分割的工作逻辑单元。
+
+
+**ACID**
+
+- 原子性(Atomicity)
+
+  - 原子性是指事务是一个不可分割的工作单位，事务中的操作要么都发生，要么都不发生。
+- 一致性 (Consistency)
+  - 事务必须使数据库从一个一致性状态变换到另外一个一致性状态。
+- 隔离性(Isolation)
+  - 事务的隔离性是多个用户并发访问数据库时，数据库为每一-个用户开启的事务，不能被其他事务的操作数据所干扰，多个并发事务之间要相互隔离。
+- 持久性(Durability)
+  - 持久性是指一个事务一旦被提交， 它对数据库中数据的改变就是永久性的，接下来即使数据库发生故障也不应该对其有任何影响。
+
+**事务和锁**
+
+- **当执行事务操作时(dml语句) ，mysql会在表上加锁，防止其它用户改表的数据。**
+- 回退事务
+  - 保存点(savepoint)是事务中的点，用于取消部分事务，**当结束事务时(commit) ，会自动的删除该事务所定义的所有保存点**。当**执行回退事务时，通过指定保存点可以回退到指定的点**
+- 提交事务
+  - 使用commit语句可以提交事务，当执行commit语句后，**会确认事务的变化、结束事务、删除保存点、释放锁，数据生效**。当使用**commit语句结束事务后**，其它会话[其他连接]将可以**查看到事务变化后的新数据[所有数据就正式生效]**
+
+锁用于确保事务完整性和数据库一致性。 锁可以防止用户读取其他用户正在更改的数据，并防止多个用户同时更改相同的数据。 如果不使用锁，数据库中的数据可能在逻辑上变得不正确，而针对这些数据进行查询可能会产生想不到的结果。
+
+在DBMS中，可以按照锁的粒度把数据库锁分为**行级锁(INNODB引擎)、表级锁(MYISAM引擎)和页级锁(BDB引擎 )。**
+
+### 事务操作
+
+![image-20240410105636478](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240410105636478.png)
+
+![img](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/3e64729f58dd48678c3e99dd97a5f23d.png)
+
+```sql
+-- 事务操作
+# 1.创建表
+CREATE TABLE trans(
+		id INT,
+		name VARCHAR(255)
+);
+# 2.开始一个事务
+START TRANSACTION
+
+# 3.设置保存点 
+# 语法 :SAVEPOINT 保存点名字
+SAVEPOINT a
+
+# 4.操作表,更新表的数据
+INSERT INTO trans VALUES(1,'25ren')
+SELECT * FROM trans
+ 
+# 5.设置保存点把数据保存
+SAVEPOINT b
+
+# 6.再插入一条数据
+INSERT INTO trans VALUES(2,'renren')
+SELECT * FROM trans
+
+# 7.回退事务
+#回退到第一次保存的只有一条数据的点
+# ROLLBACK TO 保存点名
+ROLLBACK to b
+SELECT * FROM trans
+
+
+# 8.不指定名字回退全部事务
+ROLLBACK
+SELECT * FROM trans
+
+# 9.提交事务,所有操作生效,不能回退
+COMMIT
+SELECT * FROM trans
+```
+
+#### 事务注意事项
+
+- 如果不开始事务，**默认情况下，dml操作是自动提交的，不能回滚**。
+
+- 如果开始一个事务，你没有创建保存点,，你可以执行``rollback`,默认就是回退到你事务开始的状态。
+- 你也可以在这个事务中(还没有提交时)，创建多个保存点.比如: savepoint aaa; 执行dml , savepoint bbb;。
+- 你可以在事务没有提交前，选择回退到哪个保存点。
+- mysql的**事务机制需要innodb的存储引擎才可以使用**，myisam不好使。
+- 开始一个事务的两种语法：`start transaction;  set autocommit= off;`
+
+### 4种隔离级别
 
 
 
