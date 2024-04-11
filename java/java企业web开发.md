@@ -407,7 +407,7 @@ SpringBoot的事务注解，因为多张表，我们希望一个service的操作
 </dependencyManagement>
 ```
 
-注意 dependencyManagement 只是锁定版本，不能做到子工程继承定义其中的依赖，需要显式引入，只不过不需要指定版本
+**注意 dependencyManagement 只是锁定版本，不能做到子工程继承定义其中的依赖，需要显式引入，只不过不需要指定版本**
 
 可以在pom.xml中定义属性，即所有的版本，从而抽离出来，方便管理,使用` ${}` 来取
 
@@ -475,6 +475,8 @@ HttpClient是Apache的一个子项目，是高效的、功能丰富的支持HTTP
 ![image-20240410191055270](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240410191055270.png)
 
 导入依赖
+
+如果导入过阿里云sdk就无需再导这个包，因为已经包含在内了
 
 ```xml
 <dependency>    
@@ -578,3 +580,35 @@ public void testHttpClientPost() throws IOException {
     httpClient.close();
 }
 ```
+
+## Spring Cache
+
+SpringCache是一个框架，实现了基于注解的缓存功能，只需要简单地加一个注解，就能实现缓存功能。
+
+Spring Cache 提供了一层抽象，**底层可以切换不同的缓存实现**，例如：
+
+* EHCache
+
+* Caffeine
+
+* Redis
+
+首先引入依赖
+
+```xml
+<dependency> 
+    <groupId>org.springframework.boot</groupId>  
+    <artifactId>spring-boot-starter-cache</artifactId>  
+    <version>2.7.3</version>
+</dependency>
+```
+
+| 常用注解       | 说明                                                         |
+| -------------- | ------------------------------------------------------------ |
+| @EnableCaching | 开启缓存注解功能，通常加在启动类上                           |
+| @Cacheable     | 在方法执行前先查询缓存中是否有数据，如果有数据，则直接返回缓存数据；如果没有缓存数据，调用方法并将方法返回值放到缓存中 |
+| @CachePut      | 将方法的返回值放到缓存中                                     |
+| @CacheEvict    | 将一条或多条数据从缓存中删除                                 |
+
+导入 `springcache-demo` 项目，作为入门案例
+

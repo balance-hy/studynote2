@@ -298,3 +298,427 @@ source /root/.bashrc
 
 ### 数据卷
 
+容器是隔离环境，容器内程序的文件、配置、运行时产生的容器都在容器内部，我们要读写容器内的文件非常不方便。思考几个问题：
+
+- 如果要升级MySQL版本，需要销毁旧容器，那么数据岂不是跟着被销毁了？
+- MySQL、Nginx容器**运行后**，如果我要**修改其中的某些配置该怎么办**？
+- 我想要让Nginx**代理我的静态资源**怎么办？
+
+因此，容器提供程序的运行环境，但是**程序运行产生的数据、程序运行依赖的配置都应该与容器解耦**。
+
+#### 什么是数据卷
+
+**数据卷（volume）**是一个虚拟目录，是**容器内目录**与**宿主机**目录之间映射的桥梁。
+
+以Nginx为例，我们知道Nginx中有两个关键的目录：
+
+- `html`：放置一些静态资源
+- `conf`：放置配置文件
+
+如果我们要让Nginx代理我们的静态资源，最好是放到`html`目录；如果我们要修改Nginx的配置，最好是找到`conf`下的`nginx.conf`文件。
+
+但遗憾的是，**容器运行的Nginx所有的文件都在容器内部。所以我们必须利用数据卷将两个目录与宿主机目录关联**，方便我们操作。如图：
+
+![whiteboard_exported_image2](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/whiteboard_exported_image2.png)
+
+对照 windows
+
+![image-20240411104245537](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240411104245537.png)
+
+在上图中：
+
+- 我们创建了两个数据卷：`conf`、`html`
+- Nginx容器内部的`conf`目录和`html`目录分别与两个数据卷关联。
+- 而数据卷conf和html分别指向了宿主机的`/var/lib/docker/volumes/conf/_data`目录和`/var/lib/docker/volumes/html/_data`目录
+
+这样以来，容器内的`conf`和`html`目录就 与宿主机的`conf`和`html`目录关联起来，我们称为**挂载**。此时，我们操作宿主机的`/var/lib/docker/volumes/html/_data`就是在操作容器内的`/usr/share/nginx/html/_data`目录。只要我们将静态资源放入宿主机对应目录，就可以被Nginx代理了。
+
+> `/var/lib/docker/volumes`这个目录就是默认的存放所有容器数据卷的目录，其下再根据数据卷名称创建新目录，格式为`/数据卷名/_data`。
+>
+> **为什么不让容器目录直接指向**宿主机目录呢？
+>
+> - 因为直接指向宿主机目录就与宿主机强耦合了，如果切换了环境，宿主机目录就可能发生改变了。由于容器一旦创建，目录挂载就无法修改，这样容器就无法正常工作了。
+> - 但是容器指向数据卷，一个逻辑名称，而数据卷再指向宿主机目录，就不存在强耦合。如果宿主机目录发生改变，只要改变数据卷与宿主机目录之间的映射关系即可。
+>
+> 不过，我们通过由于数据卷目录比较深，不好寻找，通常我们也**允许让容器直接与宿主机**目录挂载而不使用数据卷
+
+#### 数据卷相关命令
+
+数据卷的相关命令有：
+
+| **命令**              | **说明**             | **文档地址**                                                 |
+| :-------------------- | :------------------- | :----------------------------------------------------------- |
+| docker volume create  | 创建数据卷           | [docker volume create](https://docs.docker.com/engine/reference/commandline/volume_create/) |
+| docker volume ls      | 查看所有数据卷       | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/volume_ls/) |
+| docker volume rm      | 删除指定数据卷       | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/volume_prune/) |
+| docker volume inspect | 查看某个数据卷的详情 | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/volume_inspect/) |
+| docker volume prune   | 清除未使用的数据卷   | [docker volume prune](https://docs.docker.com/engine/reference/commandline/volume_prune/) |
+
+可以使用 `docker volume --help`来查看有关于数据卷的所有命令
+
+#### **演示nginx的html目录挂载**
+
+>  在执行`docker run`命令时，使用`-v 数据卷：容器内目录`可以完成数据卷挂载。
+>
+> 创建容器时，如果挂载了数据卷且数据卷不存在，会自动创建数据卷
+>
+> 注意只能在创建容器时挂载！！！！！ 容器创建后无法挂载
+
+```shell
+# 1.首先创建容器并指定数据卷，注意通过 -v 参数来指定数据卷 注意第一个参数为宿主机数据卷名称 第二个参数为容器内文件地址
+# 具体可查看镜像网站 具体镜像的帮助文档
+docker run -d --name nginx -p 80:80 -v html:/usr/share/nginx/html nginx
+
+# 2.然后查看数据卷
+docker volume ls
+# 结果
+DRIVER    VOLUME NAME
+local     34b6f257314826f15d1bb10df9418700fbfb05ae60b12c8212b871ef38559d96
+local     html
+
+# 3.查看数据卷详情
+docker volume inspect html
+# 结果
+[
+    {
+        "CreatedAt": "2024-05-17T19:57:08+08:00",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/html/_data",
+        "Name": "html",
+        "Options": null,
+        "Scope": "local"
+    }
+]
+
+# 4.查看/var/lib/docker/volumes/html/_data目录
+ls
+# 可以看到与nginx的html目录内容一样，结果如下：
+50x.html  index.html
+
+# 5.进入该目录，并随意修改index.html内容
+cd /var/lib/docker/volumes/html/_data
+vi index.html
+
+# 6.重启nginx，打开页面，查看效果
+docker restart nginx
+
+# 7.进入容器内部，查看/usr/share/nginx/html目录内的文件是否变化
+docker exec -it nginx bash
+```
+
+#### MySQL的匿名数据卷
+
+```shell
+docker inspect mysql # 查看名为mysql的容器具体信息
+```
+
+我们发现在 config 中显示无数据卷
+
+```json
+"Config": {
+............
+    "Volumes": {
+        "/var/lib/mysql": {}
+.........
+},
+```
+
+而在 Mounts 中有一个 长串未知 的数据卷, 但是**数据卷未定义**。这就是匿名卷。
+
+```json
+"Mounts": [
+    {
+        "Type": "volume",
+        "Name": "34b6f257314826f15d1bb10df9418700fbfb05ae60b12c8212b871ef38559d96",
+        "Source": "/var/lib/docker/volumes/34b6f257314826f15d1bb10df9418700fbfb05ae60b12c8212b871ef38559d96/_data",
+        "Destination": "/var/lib/mysql",
+        "Driver": "local",
+        "Mode": "",
+        "RW": true,
+        "Propagation": ""
+    }
+],
+```
+
+可以发现，其中有几个关键属性：
+
+- Name：数据卷名称。由于定义容器未设置容器名，这里的就是匿名卷自动生成的名字，一串hash值。
+- Source：宿主机目录
+- Destination : 容器内的目录
+
+上述配置是将容器内的`/var/lib/mysql`这个目录，与数据卷`29524ff09715d3688eae3f99803a2796558dbd00ca584a25a4bbc193ca82459f`挂载。于是在宿主机中就有了`/var/lib/docker/volumes/29524ff09715d3688eae3f99803a2796558dbd00ca584a25a4bbc193ca82459f/_data`这个目录。这就是匿名数据卷对应的目录，其使用方式与普通数据卷没有差别。
+
+#### mysql数据卷问题
+
+可以发现，数据卷的目录结构较深且如果为自动生成的匿名卷，名字很长不方便记忆，如果我们去操作数据卷目录会不太方便。
+
+**而且，因为mysql的数据是挂载到匿名卷中，如果我们需要版本迁移删除当前mysql的容器再次创建最新版本的mysql，虽然原来数据卷还在，但是会生成新的匿名卷，需要我们手动迁移，这很不方便。**
+
+在很多情况下，我们会直接将容器目录与宿主机指定目录挂载。
+
+即由我们来指定数据保存在哪里，而非默认保存在 `/var/lib/docker/volumes` 目录下
+
+**挂载语法与数据卷类似：**
+
+```shell
+# 挂载本地目录
+-v 本地目录:容器内目录
+# 挂载本地文件
+-v 本地文件:容器内文件
+```
+
+**注意**：本地目录或文件必须以 `/` 或 `./`开头，如果直接以名字开头，会被识别为数据卷名而非本地目录名。
+
+> ```Bash
+> -v mysql:/var/lib/mysql # 会被识别为一个数据卷叫mysql，运行时会自动创建这个数据卷
+> -v ./mysql:/var/lib/mysql # 会被识别为当前目录下的mysql目录，运行时如果不存在会创建目录
+> ```
+
+**教学演示**，删除并重新创建mysql容器，并完成本地目录挂载：
+
+- 挂载`/root/mysql/data`到容器内的`/var/lib/mysql`目录
+- 挂载`/root/mysql/init`到容器内的`/docker-entrypoint-initdb.d`目录（**初始化的SQL脚本目录**）
+- 挂载`/root/mysql/conf`到容器内的`/etc/mysql/conf.d`目录（**这个是MySQL配置文件目录**）
+
+在课前资料中已经准备好了mysql的`init`目录和`conf`目录：我们直接将整个mysql目录上传至虚拟机的`/root`目录下：
+
+```shell
+# 1.删除原来的MySQL容器
+docker rm -f mysql
+
+# 2.进入root目录
+cd ~
+
+# 3.创建并运行新mysql容器，挂载本地目录
+docker run -d \
+  --name mysql \
+  -p 3306:3306 \
+  -e TZ=Asia/Shanghai \
+  -e MYSQL_ROOT_PASSWORD=123 \
+  -v ./mysql/data:/var/lib/mysql \
+  -v ./mysql/conf:/etc/mysql/conf.d \
+  -v ./mysql/init:/docker-entrypoint-initdb.d \
+  mysql
+
+# 4.查看root目录，可以发现~/mysql/data目录已经自动创建好了
+ls -l mysql
+# 结果：
+总用量 4
+drwxr-xr-x. 2 root    root   20 5月  19 15:11 conf
+drwxr-xr-x. 7 polkitd root 4096 5月  19 15:11 data
+drwxr-xr-x. 2 root    root   23 5月  19 15:11 init
+
+# 查看data目录，会发现里面有大量数据库数据，说明数据库完成了初始化
+ls -l data
+```
+
+### 镜像
+
+前面我们一直在使用别人准备好的镜像，那如果我要部署一个Java项目，把它打包为一个镜像该怎么做呢？
+
+#### 镜像结构
+
+镜像就是包含了程序以及程序运行需要的系统函数库、环境、配置、依赖等文件的文件包
+
+构建镜像就是把上述文件打包的过程
+
+举个例子，我们要**从0部署一个Java应用**，大概流程是这样：
+
+- 准备一个linux服务（CentOS或者Ubuntu均可）
+- 安装并配置JDK
+- 上传Jar包
+- 运行jar包
+
+那因此，我们打包镜像也是分成这么几步：
+
+- 准备Linux运行环境（java项目并不需要完整的操作系统，仅仅是基础运行环境即可）
+- 安装并配置JDK
+- 拷贝jar包
+- 配置启动脚本
+
+上述步骤中的每一次操作其实都是在生产一些文件（系统运行环境、函数库、配置最终都是磁盘文件），所以**镜像就是一堆文件的集合**。
+
+但需要注意的是，镜像文件不是随意堆放的，而是**按照操作的步骤分层叠加而成**，每一层形成的文件都会单独打包并标记一个唯一id，称为**Layer**（**层**）。这样，**如果我们构建时用到的某些层其他人已经制作过，就可以直接拷贝使用这些层，而不用重复制作**。
+
+例如，第一步中需要的Linux运行环境，通用性就很强，所以Docker官方就制作了这样的只包含Linux运行环境的镜像。我们在制作java镜像时，就无需重复制作，直接使用Docker官方提供的CentOS或Ubuntu镜像作为基础镜像。然后再搭建其它层即可，这样逐层搭建，最终整个Java项目的镜像结构如图所示：
+
+![a29d03c9-53b3-4f0a-b13d-83b51e9c2db8](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/a29d03c9-53b3-4f0a-b13d-83b51e9c2db8.png)
+
+#### Dockerfile
+
+由于制作镜像的过程中，需要逐层处理和打包，比较复杂，所以Docker就提供了自动打包镜像的功能。我们只需要将打包的过程，每一层要做的事情用固定的语法写下来，交给Docker去执行即可。
+
+而这种记录镜像结构的文件就称为**Dockerfile**，其对应的语法可以参考官方文档：
+
+https://docs.docker.com/engine/reference/builder/
+
+其中的语法比较多，比较常用的有：
+
+| **指令**       | **说明**                                     | **示例**                     |
+| :------------- | :------------------------------------------- | :--------------------------- |
+| **FROM**       | 指定基础镜像                                 | `FROM centos:6`              |
+| **ENV**        | 设置环境变量，可在后面指令使用               | `ENV key value`              |
+| **COPY**       | 拷贝本地文件到镜像的指定目录                 | `COPY ./xx.jar /tmp/app.jar` |
+| **RUN**        | 执行Linux的shell命令，一般是安装过程的命令   | `RUN yum install gcc`        |
+| **EXPOSE**     | 指定容器运行时监听的端口，是给镜像使用者看的 | EXPOSE 8080                  |
+| **ENTRYPOINT** | 镜像中应用的启动命令，容器运行时调用         | ENTRYPOINT java -jar xx.jar  |
+
+例如，要基于Ubuntu镜像来构建一个Java应用，其Dockerfile内容如下：
+
+```dockerfile
+# 指定基础镜像
+FROM ubuntu:16.04
+# 配置环境变量，JDK的安装目录、容器内时区
+ENV JAVA_DIR=/usr/local
+ENV TZ=Asia/Shanghai
+# 拷贝jdk和java项目的包
+COPY ./jdk8.tar.gz $JAVA_DIR/
+COPY ./docker-demo.jar /tmp/app.jar
+# 设定时区
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# 安装JDK
+RUN cd $JAVA_DIR \
+ && tar -xf ./jdk8.tar.gz \
+ && mv ./jdk1.8.0_144 ./java8
+# 配置环境变量
+ENV JAVA_HOME=$JAVA_DIR/java8
+ENV PATH=$PATH:$JAVA_HOME/bin
+# 指定项目监听的端口
+EXPOSE 8080
+# 入口，java项目的启动命令
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+```
+
+上面的还是太繁琐了，有人提供了基础的系统加JDK环境的镜像，实际上我们只需要指定 jar 包和命令
+
+```dockerfile
+# 基础镜像
+FROM openjdk:11.0-jre-buster
+# 设定时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# 拷贝jar包
+COPY docker-demo.jar /app.jar
+# 入口
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+```
+
+#### 构建镜像
+
+当Dockerfile文件写好以后，就可以利用命令来构建镜像了。
+
+在课前资料中，我们准备好了一个demo项目及对应的Dockerfile：
+
+首先，我们将课前资料提供的`docker-demo.jar`包以及`Dockerfile`拷贝到虚拟机的`/root/demo`目录：
+
+然后，执行命令，构建镜像：
+
+注意：如第一次构建，需要先下载基础镜像 `docker pull openjdk:11.0-jre-buster`
+
+```shell
+# 进入镜像目录
+cd /root/demo
+# 开始构建
+docker build -t docker-demo:1.0 .
+```
+
+- `docker build `: 就是构建一个docker镜像
+- `-t docker-demo:1.0` ：`-t`参数是指定镜像的名称（`repository`和`tag`）
+- `.` : 最后的点是指构建时Dockerfile所在路径，由于我们进入了demo目录，所以指定的是`.`代表当前目录，也可以直接指定Dockerfile目录：
+
+然后尝试运行该镜像：
+
+```shell
+# 1.创建并运行容器
+docker run -d --name docker-demo -p 8080:8080 docker-demo:1.0
+# 访问
+http://192.168.40.129:8080/hello/count
+```
+
+### 网络
+
+上节课我们创建了一个Java项目的容器，而Java项目往往需要访问其它各种中间件，例如MySQL、Redis等。现在，我们的容器之间能否互相访问呢？
+
+首先，我们查看下MySQL容器的详细信息，重点关注其中的网络IP地址：
+
+```shell
+docker inspect mysql
+# 发现 mysql 的网关为172.17.0.1 ip地址为172.17.0.3
+docker inspect nginx
+# 发现 nginx 的网关为172.17.0.1 ip地址为172.17.0.2
+docker inspect docker-demo
+# 发现 docker-demo 的网关为172.17.0.1 ip地址为172.17.0.4
+```
+
+好像有点规律，这其实是在安装docker时，docker会创建一个虚拟的网卡，网卡名为 docker 0，同时也会创建一个虚拟的网桥
+
+默认情况下，所有容器都是以bridge方式连接到Docker的一个虚拟网桥上：
+
+![image-20240411140058719](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240411140058719.png)
+
+**但这会有一个问题，即容器的网络IP其实是一个虚拟的IP，其值并不固定与某一个容器绑定，而是自动分配的。如果我们在开发时写死某个IP，而在部署时很可能MySQL容器的IP会发生变化，连接会失败。**
+
+我们必须借助于docker的**自定义网络功能**来解决这个问题，官方文档：
+
+https://docs.docker.com/engine/reference/commandline/network/
+
+**加入自定义网络的容器才可以通过容器名相互访问**，常见命令有：
+
+| **命令**                  | **说明**                 | **文档地址**                                                 |
+| :------------------------ | :----------------------- | :----------------------------------------------------------- |
+| docker network create     | 创建一个网络             | [docker network create](https://docs.docker.com/engine/reference/commandline/network_create/) |
+| docker network ls         | 查看所有网络             | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/network_ls/) |
+| docker network rm         | 删除指定网络             | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/network_rm/) |
+| docker network prune      | 清除未使用的网络         | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/network_prune/) |
+| docker network connect    | 使指定容器连接加入某网络 | [docs.docker.com](https://docs.docker.com/engine/reference/commandline/network_connect/) |
+| docker network disconnect | 使指定容器连接离开某网络 | [docker network disconnect](https://docs.docker.com/engine/reference/commandline/network_disconnect/) |
+| docker network inspect    | 查看网络详细信息         | [docker network inspect](https://docs.docker.com/engine/reference/commandline/network_inspect/) |
+
+演示：自定义网络
+
+```shell
+# 1.首先通过命令创建一个网络
+docker network create hmall
+
+# 2.然后查看网络
+docker network ls
+# 结果：
+NETWORK ID     NAME      DRIVER    SCOPE
+639bc44d0a87   bridge    bridge    local
+403f16ec62a2   hmall     bridge    local
+0dc0f72a0fbb   host      host      local
+cd8d3e8df47b   none      null      local
+# 其中，除了hmall以外，其它都是默认的网络
+
+# 3.让dd和mysql都加入该网络，注意，在加入网络时可以通过--alias给容器起别名
+# 这样该网络内的其它容器可以用别名互相访问！
+# 3.1.mysql容器，指定别名为db，另外每一个容器都有一个别名是容器名
+docker network connect hmall mysql --alias db
+# 3.2.db容器，也就是我们的java项目
+docker network connect hmall dd
+
+# 4.进入dd容器，尝试利用别名访问db
+# 4.1.进入容器
+docker exec -it dd bash
+# 4.2.用db别名访问
+ping db
+# 结果
+PING db (172.18.0.2) 56(84) bytes of data.
+64 bytes from mysql.hmall (172.18.0.2): icmp_seq=1 ttl=64 time=0.070 ms
+64 bytes from mysql.hmall (172.18.0.2): icmp_seq=2 ttl=64 time=0.056 ms
+# 4.3.用容器名访问
+ping mysql
+# 结果：
+PING mysql (172.18.0.2) 56(84) bytes of data.
+64 bytes from mysql.hmall (172.18.0.2): icmp_seq=1 ttl=64 time=0.044 ms
+64 bytes from mysql.hmall (172.18.0.2): icmp_seq=2 ttl=64 time=0.054 ms
+```
+
+```shell
+# 也可以一开始就指定加入的网络 就无需后面使用 docker network connect
+docker run -d --name docker-demo -p 8080:8080 --network 网络名 docker-demo:1.0
+```
+
+## 项目部署
+
