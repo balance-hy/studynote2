@@ -598,7 +598,7 @@ FROM openjdk:11.0-jre-buster
 # 设定时区
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-# 拷贝jar包
+# 拷贝jar包 注意docker-demo.jar为源文件路径 /app.jar为容器内路径
 COPY docker-demo.jar /app.jar
 # 入口
 ENTRYPOINT ["java", "-jar", "/app.jar"]
@@ -722,3 +722,257 @@ docker run -d --name docker-demo -p 8080:8080 --network 网络名 docker-demo:1.
 
 ## 项目部署
 
+### 部署 java 项目
+
+`hmall`项目是一个maven聚合项目，使用IDEA打开`hmall`项目，查看项目结构如图：
+
+![image-20240412165823025](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240412165823025.png)
+
+查看application.yaml，你会发现其中的JDBC地址并未写死，而是读取变量：
+
+![image-20240412165959982](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240412165959982.png)
+
+将项目打包，将打包生成的jar包和提供的dockfile上传到 /root 目录下
+
+部署项目
+
+```shell
+# 1.构建项目镜像，不指定tag，则默认为latest
+docker build -t hemall:1.0 .
+
+# 2.查看镜像
+docker images
+
+# 结果
+
+
+# 3.创建并运行容器，并通过--network将其加入hmall网络，这样才能通过容器名访问mysql
+docker run -d --name hemall -p 8080:8080 --network hemall hemall:1.0
+```
+
+测试，通过浏览器访问：http://你的虚拟机地址:8080/search/list
+
+### 部署前端项目
+
+`hmall-portal`和`hmall-admin`是前端代码，需要基于nginx部署。在课前资料中已经给大家提供了nginx的部署目录：
+
+![image-20240412172641237](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240412172641237.png)
+
+其中：
+
+- `html`是静态资源目录，我们需要把`hmall-portal`以及`hmall-admin`都复制进去
+- `nginx.conf`是nginx的配置文件，主要是完成对`html`下的两个静态资源目录做代理
+
+我们现在要做的就是把该目录上传到虚拟机的`/root`目录下：
+
+然后创建nginx容器并完成两个挂载：
+
+- 把`/root/nginx/nginx.conf`挂载到`/etc/nginx/nginx.conf`
+- 把`/root/nginx/html`挂载到`/usr/share/nginx/html`
+
+由于需要让nginx同时代理hmall-portal和hmall-admin两套前端资源，因此我们需要暴露两个端口：
+
+- 18080：对应hmall-portal
+- 18081：对应hmall-admin
+
+命令如下：
+
+```Bash
+docker run -d \
+  --name nginx \
+  -p 18080:18080 \
+  -p 18081:18081 \
+  -v /root/nginx/html:/usr/share/nginx/html \
+  -v /root/nginx/nginx.conf:/etc/nginx/nginx.conf \
+  --network hmall \
+  nginx
+```
+
+测试，通过浏览器访问：http://你的虚拟机ip:18080
+
+### DockerCompose
+
+大家可以看到，我们部署一个简单的java项目，其中包含3个容器：
+
+- MySQL
+- Nginx
+- Java项目
+
+而稍微复杂的项目，其中还会有各种各样的其它中间件，需要部署的东西远不止3个，比如redis、MQ等等。如果还像之前那样手动的逐一部署，就太麻烦了。
+
+而Docker Compose就可以帮助我们实现**多个相互关联的Docker容器的快速部署**。它允许用户通过一个单独的 docker-compose.yml 模板文件（YAML 格式）来定义一组相关联的应用容器。
+
+#### 基本语法
+
+docker-compose.yml文件的基本语法可以参考官方文档：
+
+> [Compose file version 3 reference | Docker Docs](https://docs.docker.com/compose/compose-file/compose-file-v3/)
+
+docker-compose文件中可以定义多个相互关联的应用容器，每一个应用容器被称为一个服务（service）。由于service就是在定义某个应用的运行时参数，因此与`docker run`参数非常相似。
+
+举例来说，用docker run部署MySQL的命令如下：
+
+```Bash
+docker run -d \
+  --name mysql \
+  -p 3306:3306 \
+  -e TZ=Asia/Shanghai \
+  -e MYSQL_ROOT_PASSWORD=123 \
+  -v ./mysql/data:/var/lib/mysql \
+  -v ./mysql/conf:/etc/mysql/conf.d \
+  -v ./mysql/init:/docker-entrypoint-initdb.d \
+  --network hmall
+  mysql
+```
+
+如果用`docker-compose.yml`文件来定义，就是这样：
+
+```YAML
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: 123
+    volumes:
+      - "./mysql/conf:/etc/mysql/conf.d"
+      - "./mysql/data:/var/lib/mysql"
+    networks:
+      - new
+networks:
+  new:
+    name: hmall
+```
+
+对比如下：
+
+| **docker run 参数** | **docker compose 指令** | **说明**   |
+| :------------------ | :---------------------- | :--------- |
+| --name              | container_name          | 容器名称   |
+| -p                  | ports                   | 端口映射   |
+| -e                  | environment             | 环境变量   |
+| -v                  | volumes                 | 数据卷配置 |
+| --network           | networks                | 网络       |
+
+明白了其中的对应关系，相信编写`docker-compose`文件应该难不倒大家。
+
+黑马商城部署文件：
+
+```YAML
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: 123
+    volumes:
+      - "./mysql/conf:/etc/mysql/conf.d"
+      - "./mysql/data:/var/lib/mysql"
+      - "./mysql/init:/docker-entrypoint-initdb.d"
+    networks:
+      - hm-net
+  hmall:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: hmall
+    ports:
+      - "8080:8080"
+    networks:
+      - hm-net
+    depends_on:
+      - mysql
+  nginx:
+    image: nginx
+    container_name: nginx
+    ports:
+      - "18080:18080"
+      - "18081:18081"
+    volumes:
+      - "./nginx/nginx.conf:/etc/nginx/nginx.conf"
+      - "./nginx/html:/usr/share/nginx/html"
+    depends_on: # 不写也可以，写了显式声明，按顺序创建
+      - hmall
+    networks:
+      - hm-net
+networks:
+  hm-net:
+    name: hmall # 真正网络的名字
+```
+
+#### 基础命令
+
+编写好docker-compose.yml文件，就可以部署项目了。常见的命令：
+
+https://docs.docker.com/compose/reference/
+
+基本语法如下：
+
+```Bash
+docker compose [OPTIONS] [COMMAND]
+```
+
+其中，OPTIONS和COMMAND都是可选参数，比较常见的有：
+
+| Options | **参数或指令** | **说明**                                                     |
+| ------- | -------------- | ------------------------------------------------------------ |
+|         | -f             | 指定compose文件的路径和名称 **如果文件就在当前目录，且名字就为docker-compose ，就无需加** |
+|         | -p             | 指定project名称。project就是当前compose文件中设置的多个service的集合，是逻辑概念,**无需指定，默认root-容器名** |
+|         | -d             | 后台运行                                                     |
+
+
+
+| Commands | 参数或指令 | **说明**                     |
+| -------- | :--------- | :--------------------------- |
+|          | up         | 创建并启动所有service容器    |
+|          | down       | 停止并移除所有容器、网络     |
+|          | ps         | 列出所有启动的容器           |
+|          | logs       | 查看指定容器的日志           |
+|          | stop       | 停止容器                     |
+|          | start      | 启动容器                     |
+|          | restart    | 重启容器                     |
+|          | top        | 查看运行的进程               |
+|          | exec       | 在指定的运行中容器中执行命令 |
+
+教学演示：
+
+```Bash
+# 1.进入root目录
+cd /root
+
+# 2.删除旧容器
+docker rm -f $(docker ps -qa)
+
+# 3.启动所有, -d 参数是后台启动
+docker compose up -d
+# 结果：
+......
+
+# 4.查看镜像
+docker compose images
+# 结果
+CONTAINER           REPOSITORY          TAG                 IMAGE ID            SIZE
+hmall               root-hmall          latest              32eebee16acd        362MB
+mysql               mysql               latest              3218b38490ce        516MB
+nginx               nginx               latest              605c77e624dd        141MB
+
+# 5.查看容器
+docker compose ps
+# 结果
+NAME                IMAGE               COMMAND                  SERVICE             CREATED             STATUS              PORTS
+hmall               root-hmall          "java -jar /app.jar"     hmall               54 seconds ago      Up 52 seconds       0.0.0.0:8080->8080/tcp, :::8080->8080/tcp
+mysql               mysql               "docker-entrypoint.s…"   mysql               54 seconds ago      Up 53 seconds       0.0.0.0:3306->3306/tcp, :::3306->3306/tcp, 33060/tcp
+nginx               nginx               "/docker-entrypoint.…"   nginx               54 seconds ago      Up 52 seconds       80/tcp, 0.0.0.0:18080-18081->18080-18081/tcp, :::18080-18081->18080-18081/tcp
+```
+
+打开浏览器，访问：http://yourIp:8080

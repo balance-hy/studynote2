@@ -475,7 +475,7 @@ SELECT ENAME,SAL,DNAME,emp.DEPTNO
 
 -- 老韩小技巧:多表查询的条件不能少于表的个数-1,否则会出现笛卡尔集
 -- 如何显示部门号为10的部门名、员工名和工资
-#细节:若果使用having,having要在where后面
+#细节:若使用having,having要在where后面
 SELECT ENAME,SAL,DNAME,emp.DEPTNO 
 		FROM emp,dept
 		WHERE emp.DEPTNO=dept.DEPTNO AND emp.DEPTNO=10
@@ -904,7 +904,7 @@ SELECT * FROM emp WHERE ename='axJxC' #创建索引后查询时间0.002秒
 3. 普通索引(INDEX)
 
 4. 全文索引(FULLTEXT) [适用于MyISAM] 一篇文章搜索某个单词
-   开发中考虑使用：全文搜索Solr 和 ElasticSearch (ES)
+   开发中考虑使用：全文搜索 Solr 和 ElasticSearch (ES)
 
 5. 查询索引：**SHOW INDEX FROM 表名**
 
@@ -990,7 +990,6 @@ DESC 表名
 - 事务用于保证数据的一致性，它由一组相关的DML语句组成， 该组的dml语句**要么全部成功，要么全部失败**。如: 转账就要用事务来处理，用以保证数据的一致性。
 
 - 数据库的**事务（Transaction）**是一种机制、一个操作序列，包含了一组数据库操作命令。事务把所有的命令作为一个整体一起向系统提交或撤销操作请求，即这一组数据库命令要么都执行，要么都不执行，因此事务是一个不可分割的工作逻辑单元。
-
 
 **ACID**
 
@@ -1157,19 +1156,140 @@ Mysql 8 中一共有 11 种存储引擎
 
 视图（View）是一个**基于查询结果的虚拟表**，视图与真实表的区别在于视图本质上并不存储数据，**它是一个查询结果的呈现方式**，而真实表则实际存储数据。因此，**对视图的更改不会影响底层表的内容。**
 
-**简而言之，其实就是封装了一个 VO 对象**
+**简而言之，其实就是封装了一个 VO 对象** 视图变，源表也变
 
+### 视图基本使用
 
+* 创建视图:
+  * `create view 视图名 as select 视图需要的列 FROM 基表名;`
+* 修改视图的字段:
+  * `alter view 视图名 as select 视图需要的列 FROM 基表名;`
+* 查询视图如何创建:
+  * `SHOW CREATE VIEW 视图名;`
+* 删除视图:
+  * `drop view 视图名1，视图名2… `
 
+```sql
+-- 视图演示
+#创建视图
+-- 1.create view 视图名 as select 视图需要的列 FROM 基表名;
+CREATE VIEW emp_view01
+		AS
+		SELECT empno,ename,job,DEPTNO FROM emp;
+		
+SELECT * FROM emp_view01
 
+#修改视图的字段
+-- 2.alter view 视图名 as select 视图需要的列 FROM 基表名;
+ALTER VIEW emp_view01 AS SELECT ename,job,DEPTNO FROM emp;
+SELECT * FROM emp_view01
 
+#查询视图如何创建
+-- 3.SHOW CREATE VIEW 视图名;
+show CREATE VIEW emp_view01;
 
+#删除视图
+-- 4.drop view 视图名1，视图名2
+drop VIEW emp_view01
+
+-- 视图中还可创建视图
+#创建视图emp_view1
+CREATE VIEW emp_view1 AS SELECT empno,ename,job,deptno FROM emp; 
+#基于emp_view1创建emp_view2
+CREATE VIEW emp_view2 AS SELECT empno,ename FROM emp_view1; 
+```
+
+**注意事项：**
+
+- 无论视图如何套娃,数据都来源于基表
+- **视图的数据变化影响基表,基表的数据变化也影响视图**
+- 视图**只有一个视图结构文件(形式:视图名.frm),并没有数据文件**
+
+![image-20240412141251636](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240412141251636.png)
 
 ## Mysql用户管理
 
+MysQL中的用户，都存储在系统数据库 `mysql` 中 `user` 表中。
 
+其中user表的重要字段说明:
 
+- host: 允许登录的 “位置”；，localhost表示该用户只允许本机登录，也可以指定ip地址，比如:192. 168.1.100
 
+- user: 用户名；
+
+- authentication string : 密码；是通过MysQL的`password( ) 函数`加密之后的密码。
+
+### 常用操作 -用户
+
+- 创建用户
+  - `CREATE USER '用户名'@'允许登录位置' IDENTIFIED BY '密码'`
+  - 说明:创建用户，同时指定密码
+
+- 删除用户
+  - `DROP USER '用户名'@'允许登录位置';`
+- 修改密码,修改自己的密码:
+
+  - `set password = password('密码');`
+- 修改他人的密码(需要有修改用户密码权限):
+  - `set password for '用户名'@'登录位置' = password('密码');`
+
+### 权限管理
+
+常用权限：
+
+| 权限                | 说明               |
+| ------------------- | ------------------ |
+| ALL, ALL PRIVILEGES | 所有权限           |
+| SELECT              | 查询数据           |
+| INSERT              | 插入数据           |
+| UPDATE              | 修改数据           |
+| DELETE              | 删除数据           |
+| ALTER               | 修改表             |
+| DROP                | 删除数据库/表/视图 |
+| CREATE              | 创建数据库/表      |
+
+更多权限请看[权限一览表](https://blog.csdn.net/weixin_62931447/article/details/129226728#权限一览表)
+
+**授予权限**
+
+`grant 权限列表 on 数据名库.表名 to '用户名'@'登录位置' [identified by '密码']`
+
+或者不指定密码的 `grant 权限列表 on 数据名库.表名 to '用户名'@'登录位置'`
+
+说明: 权限列表，多个权限用逗号分开
+`grant select on...`
+`grant select, delete, create on ...`
+`grant all [privileges] on ...//表示赋予该用户在该对象上的所有权限`
+
+****
+
+**特别说明**
+
+* *.* : 代表本系统中的所有数据库的所有对象(表， 视图，存储过程)
+* 库名.* :表示某个数据库中的所有数据对象(表，视图，存储过程等)
+
+identified by不需要就可以省略，写出表示
+
+* 如果用户存在，就是修改该用户的密码。
+* 如果该用户不存在，就是创建新用户。
+
+****
+
+**查询权限：**
+
+* `SHOW GRANTS FOR '用户名'@'登录位置';`
+
+**撤销权限：**
+
+* `REVOKE 权限列表 ON 数据库名.表名 FROM '用户名'@'登录位置';`
+
+**注意事项**
+多个权限用逗号分隔
+授权时，数据库名和表名可以用 * 进行通配，代表所有
+
+![image-20240412145315397](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240412145315397.png)
+
+****
 
 ## 数据库范式
 
@@ -1201,8 +1321,6 @@ Mysql 8 中一共有 11 种存储引擎
    - 关注实体之间的关系分解，确保数据没有任何多余的关系。
 
 范式越高，数据的冗余度越低，数据维护的复杂度也会降低。但是，高范式会导致数据库的查询复杂度增加，并且可能导致性能的下降。因此，在设计数据库时，需要权衡数据的规范化程度和性能的需求，适度选择合适的范式。
-
-
 
 ## 各类函数
 
