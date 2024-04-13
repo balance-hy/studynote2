@@ -610,5 +610,47 @@ Spring Cache 提供了一层抽象，**底层可以切换不同的缓存实现**
 | @CachePut      | 将方法的返回值放到缓存中                                     |
 | @CacheEvict    | 将一条或多条数据从缓存中删除                                 |
 
+**Spring Boot会自动配置Redis缓存管理器 (`RedisCacheManager`) 来替代默认的 `ConcurrentMapCacheManager`。通常你不需要手动创建 `RedisCacheManager`，因为Spring Boot会自动配置它。**
+
 导入 `springcache-demo` 项目，作为入门案例
 
+```java
+public class UserController {
+
+    @Autowired
+    private UserMapper userMapper;
+
+
+    @PostMapping
+    //如果使用spring cache缓存数据，redis中key的命名 cacheNames::key
+    @CachePut(cacheNames = "userCache", key = "#user.id")
+    public User save(@RequestBody User user){
+        userMapper.insert(user);
+        return user;
+    }
+
+    @DeleteMapping
+    @CacheEvict(cacheNames = "userCache", key = "#id")
+    public void deleteById(Long id){
+        userMapper.deleteById(id);
+    }
+
+	@DeleteMapping("/delAll")
+    // allEntries = true 代表清除所有缓存以userCache开头的缓存
+    @CacheEvict(cacheNames = "userCache", allEntries = true)
+    public void deleteAll(){
+        userMapper.deleteAll();
+    }
+
+    @GetMapping
+    @Cacheable(cacheNames = "userCache", key = "#id")
+    public User getById(Long id){
+        User user = userMapper.getById(id);
+        return user;
+    }
+}
+```
+
+至于如何获取参数的值，方法返回值从而拼接缓存名，可以查看源码
+
+![image-20240413131859305](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240413131859305.png)
