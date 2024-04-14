@@ -654,3 +654,80 @@ public class UserController {
 至于如何获取参数的值，方法返回值从而拼接缓存名，可以查看源码
 
 ![image-20240413131859305](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240413131859305.png)
+
+## 微信支付
+
+需要企业认证，这里采用传智教育。。
+
+> 参考：https://pay.weixin.qq.com/static/product/product_index.shtml
+
+![image-20240414124522692](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240414124522692.png)
+
+![image-20240414125231371](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240414125231371.png)
+
+[JSAPI](https://pay.weixin.qq.com/wiki/doc/apiv3/apis/chapter3_5_1.shtml)[下单](https://pay.weixin.qq.com/wiki/doc/apiv3/apis/chapter3_5_1.shtml)：商户系统调用该接口在微信支付服务后台生成预支付交易单
+
+![image-20240414125615355](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240414125615355.png)
+
+[微信小程序调起支付](https://pay.weixin.qq.com/wiki/doc/apiv3/apis/chapter3_5_4.shtml)：通过JSAPI下单接口获取到发起支付的必要参数prepay_id，然后使用微信支付提供的小程序方法调起小程序支付
+
+![image-20240414125656616](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240414125656616.png)
+
+因为和支付相关，所以要求在调用预下单时的安全性，需要加密！
+
+获取微信支付平台证书、商户私钥文件：
+
+```
+apiclient_key.pem
+wechatpay_166D96F876F45C7D07CE98952A96EC980368ACFC.pem
+```
+
+因为用户支付成功之后，微信会推送支付结果相关信息，这需要我们传递给微信一个可访问的公网IP，目前我们是局域网IP，需要获取临时域名
+
+此处采用内网穿透工具 cpolar 
+
+![image-20240414130935348](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240414130935348.png)
+
+微信支付相关配置项
+
+属性绑定
+
+```java
+@Component
+@ConfigurationProperties(prefix = "sky.wechat")
+@Data
+public class WeChatProperties {
+
+    private String appid; //小程序的appid
+    private String secret; //小程序的秘钥
+    private String mchid; //商户号
+    private String mchSerialNo; //商户API证书的证书序列号
+    private String privateKeyFilePath; //商户私钥文件
+    private String apiV3Key; //证书解密的密钥
+    private String weChatPayCertFilePath; //平台证书
+    private String notifyUrl; //支付成功的回调地址
+    private String refundNotifyUrl; //退款成功的回调地址
+
+}
+```
+
+配置文件
+
+```yml
+  wechat:
+    appid: ${sky.wechat.appid}
+    secret: ${sky.wechat.secret}
+    mchid: ${sky.wechat.mchid}
+    mch-serial-no: ${sky.wechat.mch-serial-no}
+    private-key-file-path: ${sky.wechat.private-key-file-path}
+    api-v3-key: ${sky.wechat.api-v3-key}
+    we-chat-pay-cert-file-path: ${sky.wechat.we-chat-pay-cert-file-path}
+    notify-url: ${sky.wechat.notify-url}
+    refund-notify-url: ${sky.wechat.refund-notify-url}
+```
+
+## 地图工具-百度
+
+### 环境准备
+
+登录百度地图开放平台：https://lbsyun.baidu.com/

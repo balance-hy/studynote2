@@ -265,6 +265,10 @@ public class UserDaoTest {
 
 ## CRUD
 
+```
+在 XML 配置文件（例如 MyBatis 中的映射文件）中，&gt; 和 &lt; 是 HTML 实体，用于表示大于号 (>) 和小于号 (<)。这种写法是因为 XML 文件中直接使用 > 和 < 会导致解析问题。
+```
+
 ### namespace
 
 namespace中的包名要和Dao/Mapper 接口的包名一致！
