@@ -51,6 +51,20 @@ yum-config-manager --add-repo http://mirrors.aliyun.com/docker-ce/linux/centos/d
 yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 ```
 
+```
+docker-ce：表示 Docker Community Edition（Docker 社区版）。这是 Docker 的开源版本，为用户提供容器化应用程序所需的功能和工具。
+
+docker-ce-cli：表示 Docker Command Line Interface（Docker 命令行界面）。这是 Docker 命令行工具，用于与 Docker 引擎通信并执行 Docker 相关操作。
+
+containerd.io：表示 containerd 容器运行时，它是 Docker 使用的低级容器运行时。containerd 可以作为 Docker 引擎的依赖项，也可以单独用于管理容器的运行。
+
+docker-buildx-plugin：这是一个 Docker 插件，提供了构建跨平台 Docker 镜像的能力。buildx 是 Docker 提供的构建扩展工具，它允许你为多种平台和架构构建镜像。
+
+docker-compose-plugin：这是 Docker 的 Compose 插件。Docker Compose 是一个用于定义和管理多容器 Docker 应用程序的工具。通过该插件，你可以在 Docker CLI 中使用 Compose 的功能。
+
+命令中的 -y 是一个选项，表示在安装过程中自动确认所有提示，而不需要用户手动输入确认。这可以让安装过程在没有用户交互的情况下进行。
+```
+
 ### 启动和校验
 
 ```Bash
@@ -569,19 +583,26 @@ https://docs.docker.com/engine/reference/builder/
 ```dockerfile
 # 指定基础镜像
 FROM ubuntu:16.04
-# 配置环境变量，JDK的安装目录、容器内时区
+# 配置环境变量，指定 JDK 安装目录为 /usr/local 指定容器内的时区为 Asia/Shanghai。
 ENV JAVA_DIR=/usr/local
 ENV TZ=Asia/Shanghai
-# 拷贝jdk和java项目的包
+# 拷贝jdk和java项目的包 注意docker-demo.jar为源文件路径 /tmp/app.jar为容器内路径
+# ./jdk8.tar.gz 是主机上的文件路径，被拷贝到容器内的 $JAVA_DIR/ 目录。
 COPY ./jdk8.tar.gz $JAVA_DIR/
 COPY ./docker-demo.jar /tmp/app.jar
 # 设定时区
+# ln -snf /usr/share/zoneinfo/$TZ /etc/localtime 是软链接 /etc/localtime 到 $TZ 所指定的时区信息。
+# echo $TZ > /etc/timezone 将时区信息写入 /etc/timezone 文件中。
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 安装JDK
+# 切换到 JAVA_DIR 目录。
+# 解压 jdk8.tar.gz 文件。
+# 解压后，将目录 jdk1.8.0_144 重命名为 java8。
 RUN cd $JAVA_DIR \
  && tar -xf ./jdk8.tar.gz \
  && mv ./jdk1.8.0_144 ./java8
-# 配置环境变量
+# 配置环境变量 JAVA_HOME 是一个环境变量，指定 Java 安装目录为 $JAVA_DIR/java8。
+# PATH 是一个环境变量，将 JAVA_HOME/bin 添加到 PATH 中，以便容器中的 Java 命令可被识别。
 ENV JAVA_HOME=$JAVA_DIR/java8
 ENV PATH=$PATH:$JAVA_HOME/bin
 # 指定项目监听的端口
@@ -628,6 +649,8 @@ docker build -t docker-demo:1.0 .
 - `.` : 最后的点是指构建时Dockerfile所在路径，由于我们进入了demo目录，所以指定的是`.`代表当前目录，也可以直接指定Dockerfile目录：
 
 然后尝试运行该镜像：
+
+在 Dockerfile 文件中定义的 `ENTRYPOINT ["java", "-jar", "/app.jar"]` 是用于指定容器的入口点命令。当容器启动时，Docker 会自动执行这个命令。这是 Docker 管理容器的标准方式之一。
 
 ```shell
 # 1.创建并运行容器
