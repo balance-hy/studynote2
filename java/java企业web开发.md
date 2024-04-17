@@ -940,6 +940,108 @@ public class WebSocketTask {
 }
 ```
 
+## Apache POI
+
+Apache POI 是一个处理Miscrosoft Office各种文件格式的开源项目。简单来说就是，我们可以使用 POI 在 Java 程序中对Miscrosoft Office各种文件进行读写操作。
+
+一般情况下，**POI 都是用于操作 Excel 文件。**
+
+Apache POI 的应用场景：
+
+* 银行网银系统导出交易明细
+
+* 各种业务系统导出Excel报表
+
+* 批量导入业务数据
+
+### 入门案例
+
+首先导入maven坐标 两个包
+
+```xml
+<dependency>
+    <groupId>org.apache.poi</groupId>   
+    <artifactId>poi</artifactId>    
+    <version>3.16</version>
+</dependency>
+<dependency>   
+    <groupId>org.apache.poi</groupId>   
+    <artifactId>poi-ooxml</artifactId>   
+    <version>3.16</version>
+</dependency>
+```
+
+**写入excel**
+
+```java
+public class ApachePOITest {
+    @Test
+    public void test() throws IOException {
+        //先创建一个excel
+        XSSFWorkbook excel = new XSSFWorkbook();
+
+        //新建一个sheet页
+        XSSFSheet balanceTest = excel.createSheet("balanceTest");
+
+        //在sheet页中创建行 注意 row number从0开始
+        XSSFRow row = balanceTest.createRow(0);
+
+        //在行上创建单元格 注意 cell number从0开始
+        row.createCell(0).setCellValue("name");
+        row.createCell(1).setCellValue("sex");
+
+        XSSFRow row1 = balanceTest.createRow(1);
+        row1.createCell(0).setCellValue("balance");
+        row1.createCell(1).setCellValue("man");
+
+        //当前操作都是在内存中 写入磁盘中
+        FileOutputStream fileOutputStream = new FileOutputStream("D:\\balance.xlsx");
+        excel.write(fileOutputStream);
+
+        //关闭资源
+        fileOutputStream.close();
+        excel.close();
+    }
+}
+```
+
+**读取excel**
+
+```java
+public void readTest() throws IOException {
+    // 创建文件输入流
+    FileInputStream fileInputStream = new FileInputStream("D:\\balance.xlsx");
+    // 从输入流中得到对应 excel 文件
+    XSSFWorkbook excel = new XSSFWorkbook(fileInputStream);
+
+    //通过sheet页名字 获取指定 sheet 页
+    XSSFSheet sheet = excel.getSheet("balanceTest");
+
+    //获得最后一行有文字的行号 从0开始
+    int lastRowNum = sheet.getLastRowNum();
+    //获得第一行有文字的行号 从0开始
+    int firstRowNum = sheet.getFirstRowNum();
+    for (int i = firstRowNum; i <=lastRowNum; i++) {
+        //根据行号获得具体行
+        XSSFRow row = sheet.getRow(i);
+        //获得行中有文字的单元列 起始列号
+        short firstCellNum = row.getFirstCellNum();
+        //获得行中有文字的单元列+1 终止列号   注意！！！！！！！
+        short lastCellNum = row.getLastCellNum();
+        for (int j = firstCellNum; j < lastCellNum ; j++) {
+            //获得字符串形式的 单元格值
+            String cellValue = row.getCell(j).getStringCellValue();
+            System.out.print(cellValue+" ");
+        }
+        System.out.println();
+    }
+
+    //关闭资源
+    fileInputStream.close();
+    excel.close();
+}
+```
+
 ## 地图工具-百度
 
 ### 环境准备

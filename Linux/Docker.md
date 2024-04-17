@@ -999,3 +999,270 @@ nginx               nginx               "/docker-entrypoint.…"   nginx        
 ```
 
 打开浏览器，访问：http://yourIp:8080
+
+## 部署实战 -苍穹外卖
+
+**redis** 
+
+在虚拟机根目录下创建redis目录,其下新建conf目录，将配置文件放入
+
+```shell
+docker run -d 
+	-v ./redis/conf:/usr/local/etc/redis
+	--name redis #容器名
+	-p 6379:6379 
+	redis #镜像名
+	redis-server /usr/local/etc/redis/redis.conf
+```
+
+```yml
+  redis:
+    image: redis
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - "./redis/conf:/usr/local/etc/redis"
+    command:
+      - redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - balance-net
+```
+
+**mysql**
+
+在虚拟机根目录下创建mysql目录，其下新建data init conf目录，将`sky_take_out.sql`文件放入init目录，将`sky.conf`文件放入conf目录，此文件为数据库字符集相关设置
+
+```shell
+docker run -d \
+  --name mysql \
+  -p 3306:3306 \
+  -e TZ=Asia/Shanghai \
+  -e MYSQL_ROOT_PASSWORD=123456 \
+  -v ./mysql/data:/var/lib/mysql \
+  -v ./mysql/conf:/etc/mysql/conf.d \
+  -v ./mysql/init:/docker-entrypoint-initdb.d \
+  mysql
+```
+
+```yml
+  mysql:
+    image: mysql
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - "./mysql/data:/var/lib/mysql"
+      - "./mysql/conf:/etc/mysql/conf.d"
+      - "./mysql/init:/docker-entrypoint-initdb.d"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: 123456
+    networks:
+      - balance-net
+```
+
+**nginx**
+
+在虚拟机根目录下创建nginx目录，将html文件和conf配置上传到其下
+
+```shell
+docker run -d
+	--name nginx
+	-p 80:80
+	-v ./nginx/html:/usr/share/nginx/html
+	-v ./nginx:/etc/nginx/nginx.conf
+	nginx:1.20.2
+```
+
+```yml
+  nginx:
+    image: nginx:1.20.2
+    container_name: nginx
+    ports:
+      - "80:80"
+    volumes:
+      - "./nginx/nginx.conf:/etc/nginx/nginx.conf"
+      - "./nginx/html:/usr/share/nginx/html"
+    networks:
+      - balance-net
+```
+
+**后端项目**
+
+```yml
+  cangqiongwaimai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cangqiongwaimai
+```
+
+**汇总：**
+
+```yml
+version: '1.0'
+
+services:
+  redis:
+    image: redis
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - "./redis/conf:/usr/local/etc/redis"
+    command:
+      - redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - balance-net
+  mysql:
+    image: mysql
+    container_name: mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - "./mysql/data:/var/lib/mysql"
+      - "./mysql/conf:/etc/mysql/conf.d"
+      - "./mysql/init:/docker-entrypoint-initdb.d"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: 123456
+    networks:
+      - balance-net
+  nginx:
+    image: nginx:1.20.2
+    container_name: nginx
+    ports:
+      - "80:80"
+    volumes:
+      - "./nginx/nginx.conf:/etc/nginx/nginx.conf"
+      - "./nginx/html:/usr/share/nginx/html"
+    networks:
+      - balance-net
+  cangqiongwaimai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cangqiongwaimai
+    ports:
+      - "8080:8080"
+    networks:
+      - balance-net
+networks:
+  balance-net:
+    name: balance
+```
+
+现在我们已经将docker-compose文件编写完成，接下来，编写项目的dockerfile
+
+```dockerfile
+# 基础镜像
+FROM openjdk:8
+# 设定时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# 拷贝jar包 注意xxx.jar为源文件路径 /app.jar为容器内路径
+COPY xxx.jar /app.jar
+# 入口
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+```
+
+将 docker-compose  dockerfile sky-server-1.0-SNAPSHOT.jar上传至虚拟机根目录
+
+```shell
+# 启动并创建
+docker compose -p cangqiongwaimai up -d
+
+# 停止
+docker compose stop
+```
+
+### 注意事项
+
+其余的配置按部就班就可以，注意nginx配置文件
+
+```config
+worker_processes  1;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+
+    sendfile        on;
+    keepalive_timeout  65;
+	
+	map $http_upgrade $connection_upgrade{
+		default upgrade;
+		'' close;
+	}
+
+	upstream webservers{
+	  server balance:8080 weight=90 ;
+	}
+
+    server {
+        listen       80;
+        # server_name  192.168.40.1;
+
+
+
+        location / {
+            root   /usr/share/nginx/html/sky;
+            index  index.html index.htm;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   html;
+        }
+ 
+        # 反向代理,处理管理端发送的请求
+        location /api/ {
+			proxy_pass   http://balance:8080/admin/;
+            #proxy_pass   http://webservers/admin/;
+        }
+		
+		# 反向代理,处理用户端发送的请求
+        location /user/ {
+            proxy_pass   http://webservers/user/;
+        }
+		
+		# WebSocket
+		location /ws/ {
+            proxy_pass   http://webservers/ws/;
+			proxy_http_version 1.1;
+			proxy_read_timeout 3600s;
+			proxy_set_header Upgrade $http_upgrade;
+			proxy_set_header Connection "$connection_upgrade";
+        }
+
+
+    }
+
+}
+```
+
+尤其注意这一行
+
+```
+location / {
+    root   /usr/share/nginx/html/sky;
+    index  index.html index.htm;
+}
+```
+
+需要填写容器内的地址，而不是挂载的真实地址
+
+如果是windows,注意两者的区别
+
+```
+location / {
+    root   html/sky;
+    index  index.html index.htm;
+}
+```
+
