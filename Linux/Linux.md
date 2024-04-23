@@ -289,7 +289,7 @@ sync
 例如，常见的使用方式如下：
 
 ```shell
-ps -ef
+ps -ef # 以全格式显示当前所有进程 有父进程
 
 root 1279 1 0 2023 ? 00:00:00 /usr/sbin/atd -f：
 
@@ -416,6 +416,8 @@ ls -l hello.txt
 ![image-20240108183134253](https://raw.githubusercontent.com/balance-hy/typora/master/2023img/202401081831597.png)
 
 创建多级目录`mkdir -p 目录名/目录名....`
+
+`-p` 是一个选项，表示如果中间级目录不存在，则会自动创建
 
 也可以指定创建的位置`mkdir -p hello/hhh/hh`,这将在hello下创建hhh，在hhh下创建hh目录
 
@@ -607,6 +609,10 @@ find [搜索范围/指定的目录] [选项]
 -name <查询方式> #在指定路径下按照文件名查找文件  find /home -name hello.txt
 -user <用户名> #查找属于指定用户名所有文件   find /home -user balance
 -size <文件大小> #按照指定文件大小查找文件   find /home -size +10M 大于10M -10M 小于 10M 等于
+
+find . -name "host*" # 当前目录下按名模糊查询
+
+find . -name ".bash*" # 当前目录下查询隐藏文件bash开头的文件， . 表示一个隐藏文件
 ```
 
 #### locate 定位文件路径
@@ -1051,31 +1057,146 @@ lsblk  或者 lsblk -f
 
 ## Linux 网络
 
+![image-20240418091243525](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240418091243525.png)
+
+
+
+### 网络环境配置
+
+第一种方法(自动获取)：
+
+* 说明：登陆后，通过界面的来设置自动获取ip
+
+* 特点：linux启动后会自动获取IP
+
+* 缺点：每次自动获取的ip地址可能不一样。
+
+第二种方法(固定ip)：
+
+- 直接修改配置文件来制定IP，并可以连接到外网
+- 编辑 `vim /etc/sysconfig/network-scripts/ifcfg-ens33`
+
+```shell
+TYPE="Ethernet" # 网络类型
+PROXY_METHOD="none"
+BROWSER_ONLY="no"
+BOOTPROTO="none" # 设置为none或static就会用我们指定的ip
+DEFROUTE="yes"
+IPV4_FAILURE_FATAL="no"
+IPV6INIT="yes"
+IPV6_AUTOCONF="yes"
+IPV6_DEFROUTE="yes"
+IPV6_FAILURE_FATAL="no"
+IPV6_ADDR_GEN_MODE="stable-privacy"
+NAME="ens33"
+UUID="a11ce686-fde0-49d8-87f5-ff5b4e5f0794"
+
+DEVICE="ens33" # 设备名
+ONBOOT="yes" # 系统启动时网络接口是否有效
+IPADDR="192.168.40.129" # 指定ip
+PREFIX="24"
+GATEWAY="192.168.40.2" # 指定网关
+DNS1="192.168.40.2" # 指定 dns 解析器
+IPV6_PRIVACY="no"
+```
+
+修改完成后重新配置网络，或者重启
+
+```shell
+systemctl restart network
+reboot
+```
+
+### 主机名和hosts映射
+
+为了方便记忆，可以给linux系统设置主机名，也可以根据需要修改主机名
+
+- 指令hostname：查看主机名
+- 修改文件在 `/etc/hostname`
+-  指定修改后，重启生效
+
+思考：如何通过主机名能够找到(比如ping)某个linux系统?
+
+ windows在 `C:\Windows\System32\drivers\etc\hosts` 文件指定即可
+
+```
+案例: 192.168.200.130 hspedu100
+```
+
+linux在` /etc/hosts` 文件 指定
+
+```
+案例: 192.168.200.1 ThinkPad-PC
+```
+
+**什么是DNS？**
+
+DNS，就是 Domain Name System 的缩写，翻译过来就是域名系统是互联网上作为域名和IP地址相互映射的一个分布式数据库。
+
+用户在浏览器窗口输入www.baidu.com
+
+* 浏览器先检查浏览器缓存中有没有该域名解析IP地址，有就先调用这个IP完成解析；如果没有检查操作系统DNS解析器缓存，如果有直接返回IP完成解析。这两个缓存，可以理解为本地解析器缓存
+* 一般来说，当电脑第一次成功访问某一网站后，在一定时间内，浏览器或操作系统会缓存他的IP地址（DNS解析记录）
+  * 可在cmd窗口中输入 `ipconfig/displaydns` DNS的域名解析缓存
+  * `ipconfig /flushdns` 手动清理dns缓存
+* 如果本地解析器缓存没有找到对应映射，检查系统中hosts文件中有没有配置对应的域名IP映射，如果有，则完成解析并返回。
+* 如果本地DNS解析器缓存和hosts文件中均没有找到对应的IP则到域名服务DNS进行解析域
+
+## Linux 进程
+
+在LINUX中，每个执行的程序都称为一个进程。每一个进程都分配一个ID号（pid/进程号)。
+
+- 每个进程都可能以两种方式存在的。**前台与后台，所谓前台进程就是用户目前的屏幕上可以进行操作的。**
+- 后台进程则是实际在操作，但由于屏幕上无法看到的进程，通常使用后台方式执行。
+- 一般系统的服务都是以后台进程的方式存在，而且都会常驻在系统中。直到关机才才结束。
+
+如何终止进程？
+
+```shell
+kill [选项] 进程号
+killall 进程名称 # 注意killall还会杀子进程
+
+kill -9 xxxx # -9 强制终止
+```
+
+```
+pstree [选项]，可以更加直观的来看进程信息常用选项
+
+-p：显示进程的PID
+
+-u：显示进程的所属用户
+```
+
+### 服务管理
+
+服务（service）本质就是进程，但是是运行在后台的，通常都会监听某个端口，等待其它程序的请求，比如（mysqld，sshd防火墙等），因此我们又称为守护进程，是Linux中非常重要的知识点。
+
+```shell
+systemctl [start stop restart reload status] 名称
+
+systemctl enable/disable 名称 # 设置服务开机启动/关闭服务开机自启
+systemctl is-enabled 名称 # 查询服务是否为自启动
+```
+
+kill进程会容易中断服务本身的临时内存清理，关闭文件等操作 不推荐关闭用kill
+
+打开或关闭防火墙指定窗口
+
+```shell
+firewall-cmd --permanent --add-port=端口号/协议 # 打开端口
+
+firewall-cmd --permanent --remove-port=端口号/协议 # 关闭端口
+
+firewall-cmd --reload # 重新载入，才能生效
+
+firewall-cmd --query-port=端口/协议 # 查询端口是否开放
+```
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## Linux 包管理
 
 
 
