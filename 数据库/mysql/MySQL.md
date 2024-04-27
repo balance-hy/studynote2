@@ -1097,6 +1097,8 @@ SELECT * FROM trans
 * 幻读 （**每次返回的结果集大小不同**）
   * 同一查询在同一事务中多次进行，由于其他提交事务所做的**插入操作**，每次返回不同的结果集，此时发生幻读。
 
+![image-20240424165640949](https://raw.githubusercontent.com/balance-hy/typora/master/thinkbook/image-20240424165640949.png)
+
 事务隔离级别概念：Mysq隔离级别定义了**事务与事务之间的隔离程度**
 
 | Mysql隔离级别              | 脏读 | 不可重复读 | 幻读 | 加读锁   |
