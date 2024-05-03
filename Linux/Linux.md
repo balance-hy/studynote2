@@ -656,6 +656,8 @@ grep [选项] 模式 文件
 文件 是要搜索的文件名。
 # 示例 此命令只会显示行内有hello的行
 cat hello.txt | grep "hello" 
+
+grep -o 'example' file.txt | wc -l #一个文档关键字出现的总次数
 ```
 
 ### 压缩和解压相关指令
