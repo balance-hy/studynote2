@@ -461,7 +461,7 @@ docker inspect mysql # 查看名为mysql的容器具体信息
 - Source：宿主机目录
 - Destination : 容器内的目录
 
-上述配置是将容器内的`/var/lib/mysql`这个目录，与数据卷`29524ff09715d3688eae3f99803a2796558dbd00ca584a25a4bbc193ca82459f`挂载。于是在宿主机中就有了`/var/lib/docker/volumes/29524ff09715d3688eae3f99803a2796558dbd00ca584a25a4bbc193ca82459f/_data`这个目录。这就是匿名数据卷对应的目录，其使用方式与普通数据卷没有差别。
+上述配置是将容器内的`/var/lib/mysql`这个目录，与数据卷`34b6f257314826f15d1bb10df9418700fbfb05ae60b12c8212b871ef38559d96`挂载。于是在宿主机中就有了`/var/lib/docker/volumes/34b6f257314826f15d1bb10df9418700fbfb05ae60b12c8212b871ef38559d96/_data`这个目录。这就是匿名数据卷对应的目录，其使用方式与普通数据卷没有差别。
 
 #### mysql数据卷问题
 
