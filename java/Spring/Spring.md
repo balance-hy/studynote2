@@ -1081,6 +1081,19 @@ private Cat cat;
 
 它们的作用相同都是用注解方式注入对象，但执行顺序不同。@Autowired先byType，@Resource先byName。
 
+#### 拓展
+
+我们一般在属性上使用 @Autowired 注解进行自动注入，但是 spring 不推荐此种方式，更推荐使用构造器注入,使用构造器注入会造成一个问题，如果有很多个属性，我们都需要手动编写构造器，这无疑很繁琐且效率低，可以考虑使用 lombok 来实现优雅的注入，只需要加上注解即可
+
+```java
+@Service
+@RequiredArgsConstructor //只会对被final修饰的属性进行注入
+public class CartServiceImpl extends ServiceImpl<CartMapper, Cart> implements ICartService {
+
+    private final ItemClient itemClient;
+}
+```
+
 ## 使用注解开发
 
 在spring4之后，想要使用注解形式，必须得要引入aop的包
