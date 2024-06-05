@@ -1116,43 +1116,1030 @@ public void listenTopicQueue2(String msg){
 
 #### 消息转换器
 
+Spring的消息发送代码接收的消息体是一个Object：
+
+![image-20240603093313016](http://img.balance.wiki//blog/image-20240603093313016.png)
+
+而在数据传输时，它会把你发送的消息序列化为字节发送给MQ，接收消息的时候，还会把字节反序列化为Java对象。
+
+只不过，**默认情况下Spring采用的序列化方式是JDK序列化**。众所周知，JDK序列化存在下列问题：
+
+- 数据体积过大
+- 有安全漏洞
+- 可读性差
+
+我们可以来测试一下
+
+##### 测试默认转换器
+
+> 需求：测试利用SpringAMQP发送对象类型的消息
+>
+> - 声明一个队列，名为object.queue
+> - 编写单元测试，向队列中直接发送一条消息，消息类型为Map
+> - 在控制台查看消息，总结你能发现的问题
+
+队列直接在控制台声明即可，略
+
+我们在publisher模块的SpringAmqpTest中新增一个消息发送的代码，发送一个Map对象
+
+```java
+@Test
+public void testConvert(){
+    //队列名称
+    String queueName = "object.queue";
+    //消息
+    HashMap<String, Object> map = new HashMap<>();
+    map.put("name","小明");
+    map.put("age",18);
+    //发送消息
+    rabbitTemplate.convertAndSend(queueName,map);
+}
+```
+
+发送消息后查看控制台：
+
+![image-20240603095139818](http://img.balance.wiki//blog/image-20240603095139818.png)
+
+可以看到消息格式非常不友好。
+
+##### 配置JSON转换器
+
+显然，JDK序列化方式并不合适。我们希望消息体的体积更小、可读性更高，因此可以使用JSON方式来做序列化和反序列化。
+
+在`publisher`和`consumer`两个服务中都引入依赖：
+
+```XML
+<dependency>
+    <groupId>com.fasterxml.jackson.dataformat</groupId>
+    <artifactId>jackson-dataformat-xml</artifactId>
+    <version>2.9.10</version>
+</dependency>
+```
+
+> 注意，如果项目中引入了`spring-boot-starter-web`依赖，则无需再次引入`Jackson`依赖。
+
+配置消息转换器，在`publisher`和`consumer`两个服务的启动类中添加一个Bean即可：
+
+```Java
+@Bean
+public MessageConverter messageConverter(){
+    // 1.定义消息转换器
+    Jackson2JsonMessageConverter jackson2JsonMessageConverter = new Jackson2JsonMessageConverter();
+    // 2.配置自动创建消息id，用于识别不同消息，也可以在业务中基于ID判断是否是重复消息
+    jackson2JsonMessageConverter.setCreateMessageIds(true);
+    return jackson2JsonMessageConverter;
+}
+```
+
+消息转换器中添加的messageId可以便于我们将来做幂等性判断。
+
+此时，我们到MQ控制台**删除**`object.queue`中的旧的消息。然后再次执行刚才的消息发送的代码，到MQ的控制台查看消息结构：
+
+![image-20240603100340723](http://img.balance.wiki//blog/image-20240603100340723.png)
+
+##### 消费者接收Object
+
+我们在consumer服务中定义一个新的消费者，publisher是用Map发送，那么消费者也一定要用Map接收，格式如下：
+
+```Java
+@RabbitListener(queues = "object.queue")
+public void listenObjectQueue(Map<String, Object> map) {
+    map.forEach((k,v)->{
+        System.out.println(k+" "+v);
+    });
+}
+```
+
+### 业务改造-实战
+
+案例需求：改造余额支付功能，将支付成功后基于OpenFeign的交易服务的更新订单状态接口的同步调用，改为基于RabbitMQ的异步通知。
+
+如图：
+
+![image-20240603101917984](http://img.balance.wiki//blog/image-20240603101917984.png)
+
+说明：目前没有通知服务和积分服务，因此我们只关注交易服务，步骤如下：
+
+- 定义`direct`类型交换机，命名为`pay.direct`
+- 定义消息队列，命名为`trade.pay.success.queue`
+- 将`trade.pay.success.queue`与`pay.direct`绑定，`BindingKey`为`pay.success`
+- 支付成功时不再调用交易服务更新订单状态的接口，而是发送一条消息到`pay.direct`，发送消息的`RoutingKey`  为`pay.success`，消息内容是订单id
+- 交易服务监听`trade.pay.success.queue`队列，接收到消息后更新订单状态为已支付
+
+#### 配置MQ
+
+不管是生产者还是消费者，都需要配置MQ的基本信息。分为两步：
+
+1）添加依赖：
+
+```XML
+<!--消息发送-->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-amqp</artifactId>
+</dependency>
+```
+
+2）配置MQ地址：
+
+```YAML
+spring:
+  rabbitmq:
+    host: 192.168.40.129 # 你的虚拟机IP
+    port: 5672 # 端口
+    virtual-host: /hmall # 虚拟主机
+    username: hmall # 用户名
+    password: 123456 # 密码
+```
+
+这可以抽取出来放到nacos中。
+
+#### 配置消息转换器
+
+因为每一个微服务都会需要，所以放在hm-common中，在config包下新建MqConfig
+
+```java
+@Configuration
+public class MqConfig {
+    @Bean
+    public MessageConverter messageConverter(){
+        return new Jackson2JsonMessageConverter();
+    }
+}
+```
+
+> 注意此时无法生效，因为无法扫描到该包下的配置，可以利用spring的自动装配原理，在resources目录下新建META-INF文件夹，其下新建spring.factories文件，里面新增该类全限定类名即可
+
+```
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+  com.hmall.common.config.MyBatisConfig,\
+  com.hmall.common.config.MvcConfig,\
+  com.hmall.common.config.JsonConfig,\
+  com.hmall.common.config.MqConfig
+```
+
+#### 接收消息
+
+在trade-service服务中定义一个消息监听类：
+
+```java
+package com.hmall.trade.listener;
+
+import com.hmall.trade.service.IOrderService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.rabbit.annotation.Exchange;
+import org.springframework.amqp.rabbit.annotation.Queue;
+import org.springframework.amqp.rabbit.annotation.QueueBinding;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
+@Component
+@RequiredArgsConstructor
+public class PayStatusListener {
+    private final IOrderService orderService;
+
+    @RabbitListener(bindings = @QueueBinding(
+            value = @Queue(name = "trade.pay.success.queue",durable = "true"),
+            exchange = @Exchange(name="pay.topic"),
+            key = "pay.success"
+    ))
+    public void listenPaySuccess(Long orderId){
+        orderService.markOrderPaySuccess(orderId);
+    }
+
+}
+```
+
+#### 发送消息
+
+修改`pay-service`服务下的`com.hmall.pay.service.impl.PayOrderServiceImpl`类中的`tryPayOrderByBalance`方法
+
+```java
+    @Override
+    @Transactional
+    public void tryPayOrderByBalance(PayOrderFormDTO payOrderFormDTO) {
+        // 1.查询支付单
+        PayOrder po = getById(payOrderFormDTO.getId());
+        // 2.判断状态
+        if(!PayStatus.WAIT_BUYER_PAY.equalsValue(po.getStatus())){
+            // 订单不是未支付，状态异常
+            throw new BizIllegalException("交易已支付或关闭！");
+        }
+        // 3.尝试扣减余额
+        userClient.deductMoney(payOrderFormDTO.getPw(), po.getAmount());
+        // 4.修改支付单状态
+        boolean success = markPayOrderSuccess(payOrderFormDTO.getId(), LocalDateTime.now());
+        if (!success) {
+            throw new BizIllegalException("交易已支付或关闭！");
+        }
+        // 5.修改订单状态
+//        Order order = new Order();
+//        order.setId(po.getBizOrderNo());
+//        order.setStatus(2);
+//        order.setPayTime(LocalDateTime.now());
+//        tradeClient.updateById(order);
+//        tradeClient.markOrderPaySuccess(po.getBizOrderNo());
+        try {
+            rabbitTemplate.convertAndSend("pay.direct", "pay.success", po.getBizOrderNo());
+        }catch (Exception e){
+            log.info("修改订单状态消息发送失败");
+        }
+            
+    }
+```
+
+#### 测试
+
+此时启动发现报错
+
+```
+Failed to introspect Class [com.hmall.common.config.MqConfig] from ClassLoader [jdk.internal.loader.ClassLoaders$AppClassLoader@1f89ab83]
+```
+
+这是因为所有的服务都依赖于common，当MqConfig配置到Spring时，除去trade和pay服务，其他服务也会自动注入MqConfig中的消息转换器Bean，但其他服务并没有引入amqp的依赖，自然注入失败报错。两种解决方法都行，一种是common里面引amqp的依赖，另一种就是ConditionalOnClass。
+
+```java
+@ConditionalOnClass(RabbitTemplate.class)//只有其它地方用到了RabbitTemplate，这个MqConfig才会生效
+```
+
+这里简便起见直接引依赖即可
+
+现在就可以正常使用啦！
+
+### 练习
+
+改造下单功能，将基于OpenFeign的清理购物车同步调用，改为基于RabbitMQ的异步通知：
+
+- 定义topic类型交换机，命名为`trade.direct`
+- 定义消息队列，命名为`cart.clear.queue`
+- 将`cart.clear.queue`与`trade.topic`绑定，`BindingKey`为`order.create`
+- 下单成功时不再调用清理购物车接口，而是发送一条消息到`trade.topic`，发送消息的`RoutingKey`  为`order.create`，消息内容是下单的具体商品、当前登录用户信息
+- 购物车服务监听`cart.clear.queue`队列，接收到消息后清理指定用户的购物车中的指定商品
+
+![image-20240603143426790](http://img.balance.wiki//blog/image-20240603143426790.png)
+
+![image-20240603143510168](http://img.balance.wiki//blog/image-20240603143510168.png)
+
+### 小结
+
+某些业务中，需要根据登录用户信息处理业务，而基于MQ的异步调用并不会传递登录用户信息。前面我们的做法比较麻烦，至少要做两件事：
+
+- 消息发送者在消息体中传递登录用户
+- 消费者获取消息体中的登录用户，处理业务
+
+这样做不仅麻烦，而且编程体验也不统一，毕竟我们之前都是使用UserContext来获取用户。
+
+***思考一下：有没有更优雅的办法传输登录用户信息，让使用MQ的人无感知，依然采用UserContext来随时获取用户。***
+
+> 在异步通知中，你可以将用户信息作为消息的一部分发送。具体来说，你可以将用户信息添加到你发送的消息体中，或者如果你的消息队列支持，你也可以将用户信息添加到消息的属性或头部信息中。
+>
+> 以下是一个使用RabbitMQ和Spring AMQP的例子，它将用户信息添加到消息的头部信息中：
+>
+> ```java
+> MessageProperties messageProperties = new MessageProperties();
+> messageProperties.setHeader("userId", UserContext.getUser());
+> Message message = new Message(objectMapper.writeValueAsBytes(yourData), messageProperties);
+> rabbitTemplate.send("exchangeName", "routingKey", message);
+> ```
+>
+> 在上述代码中，`UserContext.getUser()`是获取用户信息的方法，`yourData`是你要发送的数据，`objectMapper`是Jackson的`ObjectMapper`实例，用于将对象转换为JSON格式的字节。
+>
+> 在接收端，你可以从消息的头部信息中获取用户信息：
+>
+> ```java
+> @RabbitListener(queues = "queueName")
+> public void handleMessage(Message message) {
+>     String userId = (String) message.getMessageProperties().getHeaders().get("userId");
+>     byte[] body = message.getBody();
+>     YourDataType yourData = objectMapper.readValue(body, YourDataType.class);
+>     // ...
+> }
+> ```
+>
+> 在上述代码中，`YourDataType`是你的数据类型，你需要将其替换为实际的类型。
+>
+> 这样，你就可以在异步通知中传递用户信息了。
+
+## MQ高级
+
+在昨天的练习作业中，我们改造了余额支付功能，在支付成功后利用`RabbitMQ`通知交易服务，更新业务订单状态为已支付。
+
+但是大家思考一下，如果这里**MQ通知失败，支付服务中支付流水显示支付成功，而交易服务中的订单状态却显示未支付，数据出现了不一致。**
+
+此时前端发送请求查询支付状态时，肯定是查询交易服务状态，会发现业务订单未支付，而用户自己知道已经支付成功，这就导致用户体验不一致。
+
+因此，这里***我们必须尽可能确保MQ消息的可靠性，即：消息应该至少被消费者处理1次***
+
+那么问题来了：
+
+- **我们该如何确保MQ消息的可靠性**？
+- **如果真的发送失败，有没有其它的兜底方案？**
+
+> 不是所有的业务都有这样的可靠性要求，比如用户下单支付去清理购物车，那么清理购物车就算失败了，对用户也没有什么太大损失，但是我们知道99%的情况下是不会失败的，这种场景就不用考虑这个问题，就正常发送消息就行了，不用管那么多。
+>
+> 而对于订单状态来讲，这个对于可靠性要求很高，总不能说用户支付成功了，最后用户来查看订单依然显示未支付，这对用户来讲就有影响，这种对一致性就有一定的要求，所以可靠性就要保证好
+
+### 发送者可靠性
+
+首先，我们一起分析一下消息丢失的可能性有哪些。
+
+消息从发送者发送消息，到消费者处理消息，需要经过的流程是这样的：
+
+![image-20240603145215291](http://img.balance.wiki//blog/image-20240603145215291.png)
+
+消息从生产者到消费者的每一步都可能导致消息丢失：
+
+- 发送消息时丢失：
+  - 生产者发送消息时连接MQ失败
+  - 生产者发送消息到达MQ后未找到`Exchange`
+  - 生产者发送消息到达MQ的`Exchange`后，未找到合适的`Queue`
+  - 消息到达MQ后，处理消息的进程发生异常
+- MQ导致消息丢失：
+  - 消息到达MQ，保存到队列后，尚未消费就突然宕机
+- 消费者处理消息时：
+  - 消息接收后尚未处理突然宕机
+  - 消息接收后处理过程中抛出异常
+
+**综上，我们要解决消息丢失问题，保证MQ的可靠性，就必须从3个方面入手：**
+
+- **确保生产者一定把消息发送到MQ**
+- **确保MQ不会将消息弄丢**
+- **确保消费者一定要处理消息**
+
+#### 生产者重试机制
+
+首先第一种情况，就是生产者发送消息时，出现了网络故障，导致与MQ的连接中断。
+
+为了解决这个问题，SpringAMQP提供的消息发送时的重试机制。即：当`RabbitTemplate`与MQ连接超时后，多次重试。
+
+修改`publisher`模块的`application.yaml`文件，添加下面的内容：
+
+```YAML
+spring:
+  rabbitmq:
+    connection-timeout: 1s # 设置MQ的连接超时时间
+    template:
+      retry:
+        enabled: true # 开启超时重试机制
+        initial-interval: 1000ms # 失败后的初始等待时间
+        multiplier: 1 # 失败后下次的等待时长倍数，下次等待时长 = initial-interval * multiplier
+        max-attempts: 3 # 最大重试次数
+```
+
+我们利用命令停掉RabbitMQ服务：
+
+```Shell
+docker stop mq
+```
+
+然后测试发送一条消息，会发现会每隔1秒重试1次，总共重试了3次。消息发送的超时重试机制配置成功了！
+
+> **注意**：当网络不稳定的时候，利用重试机制可以有效提高消息发送的成功率。不过SpringAMQP提供的重试机制是**阻塞式**的重试，也就是说多次重试等待的过程中，当前线程是被阻塞的。
+>
+> 如果对于业务性能有要求，建议禁用重试机制。如果一定要使用，请合理配置等待时长和重试次数，当然也可以考虑使用异步线程来执行发送消息的代码。
+
+#### 生产者确认机制
+
+一般情况下，只要生产者与MQ之间的网路连接顺畅，基本不会出现发送消息丢失的情况，因此大多数情况下我们无需考虑这种问题。
+
+不过，在少数情况下，也会出现消息发送到MQ之后丢失的现象，比如：
+
+- MQ内部处理消息的进程发生了异常
+- 生产者发送消息到达MQ后未找到`Exchange`
+- 生产者发送消息到达MQ的`Exchange`后，未找到合适的`Queue`，因此无法路由
+
+针对上述情况，RabbitMQ提供了生产者消息确认机制，包括`Publisher Confirm`和`Publisher Return`两种。在开启确认机制的情况下，当生产者发送消息给MQ后，MQ会根据消息处理的情况返回不同的**回执**。
+
+具体如图所示：
+
+![image-20240603150326829](http://img.balance.wiki//blog/image-20240603150326829.png)
+
+总结如下：
+
+- 当消息投递到MQ，但是**路由失败**时，通过**Publisher Return**返回异常信息，同时返回ack的确认信息，代表投递成功
+- 临时消息投递到了MQ，并且入队成功，返回ACK，告知投递成功
+- 持久消息投递到了MQ，并且入队完成持久化，返回ACK ，告知投递成功
+- 其它情况都会返回NACK，告知投递失败
+
+其中`ack`和`nack`属于**Publisher Confirm**机制，`ack`是投递成功；`nack`是投递失败。而`return`则属于**Publisher Return**机制。
+
+默认两种机制都是关闭状态，需要通过配置文件来开启。
+
+#### 实现生产者确认
+
+##### 开启生产者确认
+
+在publisher模块的`application.yaml`中添加配置：
+
+```YAML
+spring:
+  rabbitmq:
+    publisher-confirm-type: correlated # 开启publisher confirm机制，并设置confirm类型
+    publisher-returns: true # 开启publisher return机制
+```
+
+这里`publisher-confirm-type`有三种模式可选：
+
+- `none`：关闭confirm机制
+- `simple`：同步阻塞等待MQ的回执
+- `correlated`：MQ异步回调返回回执
+
+一般我们推荐使用`correlated`，回调机制。
+
+##### 定义ReturnCallBack
+
+每个`RabbitTemplate`只需要配置一个`ReturnCallback`，因此我们可以在配置类中统一设置。我们在publisher模块定义一个配置类：
+
+![image-20240604165713456](http://img.balance.wiki//blog/image-20240604165713456.png)
+
+内容如下：
+
+```Java
+package com.itheima.publisher.config;
+
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.ReturnedMessage;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.context.annotation.Configuration;
+
+import javax.annotation.PostConstruct;
+
+@Slf4j
+@AllArgsConstructor
+@Configuration
+public class MqConfig {
+    private final RabbitTemplate rabbitTemplate;
+
+    @PostConstruct
+    public void init(){
+        rabbitTemplate.setReturnsCallback(new RabbitTemplate.ReturnsCallback() {
+            @Override
+            public void returnedMessage(ReturnedMessage returned) {
+                log.error("监听到了消息的return callback,");
+                log.debug("exchange: {}", returned.getExchange());
+                log.debug("routingKey: {}", returned.getRoutingKey());
+                log.debug("message: {}", returned.getMessage());
+                log.debug("replyCode: {}", returned.getReplyCode());
+                log.debug("replyText: {}", returned.getReplyText());
+            }
+        });
+    }
+}
+```
+
+##### 定义ConfirmCallback
+
+由于每个消息发送时的处理逻辑不一定相同，因此ConfirmCallback需要在每次发消息时定义。具体来说，是在调用RabbitTemplate中的convertAndSend方法时，**多传递一个参数,以此唯一确定一个消息**：
+
+![image-20240604165926038](http://img.balance.wiki//blog/image-20240604165926038.png)
+
+这里的CorrelationData中包含两个核心的东西：
+
+- `id`：消息的唯一标示，MQ对不同的消息的回执以此做判断，避免混淆
+- `SettableListenableFuture`：回执结果的Future对象
+
+将来MQ的回执就会通过这个`Future`来返回，我们可以提前给`CorrelationData`中的`Future`添加回调函数来处理消息回执：
+
+![image-20240604165943305](http://img.balance.wiki//blog/image-20240604165943305.png)
+
+我们新建一个测试，向系统自带的交换机发送消息，并且添加`ConfirmCallback`：
+
+```Java
+@Test
+void testPublisherConfirm() {
+    // 1.创建CorrelationData
+    CorrelationData cd = new CorrelationData(UUID.randomUUID().toString);//唯一id
+    // 2.给Future添加ConfirmCallback
+    cd.getFuture().addCallback(new ListenableFutureCallback<CorrelationData.Confirm>() {
+        @Override
+        public void onFailure(Throwable ex) {
+            // 2.1.Future发生异常时的处理逻辑，基本不会触发
+            log.error("spring amqp处理确认结果异常", ex);
+        }
+        @Override
+        public void onSuccess(CorrelationData.Confirm result) {
+            // 2.2.Future接收到回执的处理逻辑，参数中的result就是回执内容
+            if(result.isAck()){ // result.isAck()，boolean类型，true代表ack回执，false 代表 nack回执
+                log.debug("发送消息成功，收到 ack!");
+            }else{ // result.getReason()，String类型，返回nack时的异常描述
+                log.error("发送消息失败，收到 nack, reason : {}", result.getReason());
+            }
+        }
+    });
+    // 3.发送消息
+    rabbitTemplate.convertAndSend("hmall.direct", "q", "hello", cd);
+    //注意这是测试，方法结束jvm就销毁了，没有充足的时间接收回调
+    Thread.sleep(2000);//休眠两秒，接收回调
+}
+```
+
+执行结果如下：
+
+![image-20240604171913086](http://img.balance.wiki//blog/image-20240604171913086.png)
+
+可以看到，由于传递的`RoutingKey`是错误的，路由失败后，触发了`return callback`，同时也收到了ack。
+
+当我们修改为正确的`RoutingKey`以后，就不会触发`return callback`了，只收到ack。
+
+而如果连交换机都是错误的，则只会收到nack。
+
+> **注意**：
+>
+> 开启生产者确认比较消耗MQ性能，一般不建议开启。而且大家思考一下触发确认的几种情况：
+>
+> - 路由失败：一般是因为RoutingKey错误导致，往往是编程导致
+> - 交换机名称错误：同样是编程错误导致
+> - MQ内部故障：这种需要处理，但概率往往较低。因此只有对消息可靠性要求非常高的业务才需要开启，而且仅仅需要开启ConfirmCallback处理nack就可以了。
+
+### MQ的可靠性
+
+在默认情况下，RabbitMQ会将接收到的信息保存在内存中以降低消息收发的延迟。这样会导致两个问题：
+
+- 一旦MQ宕机，内存中的消息会丢失
+- 内存空间有限，当消费者故障或处理过慢时，会导致消息积压，引发MQ阻塞
+
+#### 数据持久化
+
+为了提升性能，默认情况下MQ的数据都是在内存存储的临时数据，重启后就会消失。为了保证数据的可靠性，必须配置数据持久化，包括：
+
+- 交换机持久化
+- 队列持久化
+- 消息持久化
+
+我们以控制台界面为例来说明。
+
+> 注意，mq默认当内存达上限向磁盘写入，即持久化，此时会造成较长时间中断，这里我们所说的持久化是每隔一段时间批量持久化，而非达限才写。
+
+##### 交换机持久化
+
+在控制台的`Exchanges`页面，添加交换机时可以配置交换机的`Durability`参数：
+
+![image-20240605151503855](http://img.balance.wiki//blog/image-20240605151503855.png)
+
+设置为`Durable`就是持久化模式，`Transient`就是临时模式。
+
+>spring amqp 默认创建的就是持久化的交换机
+
+##### 队列持久化
+
+在控制台的Queues页面，添加队列时，同样可以配置队列的`Durability`参数：
+
+![image-20240605151558369](http://img.balance.wiki//blog/image-20240605151558369.png)
+
+除了持久化以外，你可以看到队列还有很多其它参数，有一些我们会在后期学习。
+
+> spring amqp 默认创建的就是持久化的队列
+
+##### 消息持久化
+
+在控制台发送消息的时候，可以添加很多参数，而消息的持久化是要配置一个`properties`：
+
+![image-20240605151646856](http://img.balance.wiki//blog/image-20240605151646856.png)
+
+> **说明**：在开启持久化机制以后，如果同时还开启了生产者确认，**那么MQ会在消息持久化以后才发送ACK回执，进一步确保消息的可靠性。**
+>
+> 不过出于性能考虑，为了减少IO次数，发送到MQ的消息并不是逐条持久化到数据库的，而是每隔一段时间批量持久化。一般间隔在100毫秒左右，这就会导致ACK有一定的延迟，因此建议生产者确认全部采用异步方式。
+
+***注意：同样，spring amqp 默认创建的就是持久化的消息，如果想创建非持久化的消息，可以如下创建：***
+
+```java
+@Test
+void testPageOut(）{
+    Message messagee= MessageBuilder
+        .withBody("hello".getBytes(StandardCharsets.UTF_8))
+        .setDeliveryMode(MesSageDeliveryMode.NON_PERSISTENT).build();//自己构建消息，底层就是创建一个message对象传输
+    rabbitTemplate.convertAndSend("simple.queue",message);
+}
+```
+
+#### LazyQueue 3.12后无需配置
+
+从RabbitMQ的3.6.0版本开始，就增加了LazyQueue的概念，也就是**惰性队列**。
+
+惰性队列的特征如下:
+
+- 接收到消息后直接存入磁盘，不再存储到内存
+- 消费者要消费消息时才会从磁盘中读取并加载到内存（**可以提前缓存部分消息到内存，最多2048条**）
+
+**在3.12版本后，所有队列都是Lazy Queue模式，无法更改。**
+
+> 因为磁盘读写慢，更换为全部磁盘存储会影响并发处理效率，所以采用了缓存的方式去缓解
+
+##### 控制台配置Lazy模式
+
+在添加队列的时候，添加`x-queue-mod=lazy`参数即可设置队列为Lazy模式：
+
+![image-20240605152506890](http://img.balance.wiki//blog/image-20240605152506890.png)
+
+##### 代码配置Lazy模式
+
+在利用SpringAMQP声明队列的时候，添加`x-queue-mod=lazy`参数也可设置队列为Lazy模式：
+
+```Java
+@Bean
+public Queue lazyQueue(){
+    return QueueBuilder
+            .durable("lazy.queue")
+            .lazy() // 开启Lazy模式
+            .build();
+}
+```
+
+当然，我们也可以**基于注解来声明队列**并设置为Lazy模式：
+
+```Java
+@RabbitListener(queuesToDeclare = @Queue(
+        name = "lazy.queue",
+        durable = "true",
+        arguments = @Argument(name = "x-queue-mode", value = "lazy") 
+))
+public void listenLazyQueue(String msg){
+    log.info("接收到 lazy.queue的消息：{}", msg);
+}
+```
+
+##### 更新已有队列为lazy模式
+
+对于已经存在的队列，也可以配置为lazy模式，但是要通过设置policy实现。
+
+可以基于命令行设置policy：
+
+```Shell
+rabbitmqctl set_policy Lazy "^lazy-queue$" '{"queue-mode":"lazy"}' --apply-to queues  
+```
+
+命令解读：
+
+- `rabbitmqctl` ：RabbitMQ的命令行工具
+- `set_policy` ：添加一个策略
+- `Lazy` ：策略名称，可以自定义
+- `"^lazy-queue$"` ：用正则表达式匹配队列的名字
+- `'{"queue-mode":"lazy"}'` ：设置队列模式为lazy模式
+- `--apply-to queues`：策略的作用对象，是所有的队列
+
+当然，也可以在控制台配置policy，进入在控制台的`Admin`页面，点击`Policies`，即可添加配置：
+
+![image-20240605152636632](http://img.balance.wiki//blog/image-20240605152636632.png)
 
 
 
+### 消费者的可靠性
+
+当RabbitMQ向消费者投递消息以后，需要知道消费者的处理状态如何。因为消息投递给消费者并不代表就一定被正确消费了，可能出现的故障有很多，比如：
+
+- 消息投递的过程中出现了网络故障
+- 消费者接收到消息后突然宕机
+- 消费者接收到消息后，因处理不当导致异常
+- ...
+
+***一旦发生上述情况，消息也会丢失。因此，RabbitMQ必须知道消费者的处理状态，一旦消息处理失败才能重新投递消息。***
+
+***但问题来了：RabbitMQ如何得知消费者的处理状态呢？***
+
+#### 消费者确认机制
+
+消费者确认机制（ConsumerAcknowledgement）是为了确认消费者是否成功处理消息。当消费者处理消息结束后应该向RabbitMQ发送一个回执，告知RabbitMQ自己消息处理状态：
+
+回执有三种可选值：
+
+- **ack**：成功处理消息，RabbitMQ从队列中删除该消息
+- **nack**：消息处理失败，RabbitMQ需要再次投递消息
+- **reject**：消息处理失败并拒绝该消息，RabbitMQ从队列中删除该消息
+
+一般**reject**方式用的较少，除非是消息格式有问题，那就是开发问题了。因此大多数情况下我们需要将消息处理的代码通过`try catch`机制捕获，**消息处理成功时返回ack，处理失败时返回nack.**
+
+> 由于消息回执的处理代码比较统一，因此SpringAMQP帮我们实现了消息确认。并允许我们通过配置文件设置ACK处理方式，有三种模式：
+>
+> - **`none`**：不处理。即消息投递给消费者后立刻ack，消息会立刻从MQ删除。非常不安全，不建议使用
+> - **`manual`**：手动模式。需要自己在业务代码中调用api，发送`ack`或`reject`，存在业务入侵，但更灵活
+> - **`auto`**：自动模式。SpringAMQP利用AOP对我们的消息处理逻辑做了环绕增强，当业务正常执行时则自动返回`ack`.  当业务出现异常时，根据异常判断返回不同结果：
+>   - 如果是**业务异常**，会自动返回`nack`；
+>   - 如果是**消息处理或校验异常**，自动返回`reject`;
+
+通过下面的配置可以修改SpringAMQP的ACK处理方式：
+
+```YAML
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        acknowledge-mode: none # 不做处理
+```
+
+修改consumer服务的SpringRabbitListener类中的方法，模拟一个消息处理的异常：
+
+```Java
+@RabbitListener(queues = "simple.queue")
+public void listenSimpleQueueMessage(String msg) throws InterruptedException {
+    log.info("spring 消费者接收到消息：【" + msg + "】");
+    if (true) {
+        throw new MessageConversionException("故意的");
+    }
+    log.info("消息处理完成");
+}
+```
+
+测试可以发现：当消息处理发生异常时，消息依然被RabbitMQ删除了。
+
+我们再次把确认机制修改为auto：
+
+```YAML
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        acknowledge-mode: auto # 自动ack
+```
+
+在异常位置打断点，再次发送消息，程序卡在断点时，可以发现此时消息状态为`unacked`（未确定状态）：
+
+![image-20240605154120885](http://img.balance.wiki//blog/image-20240605154120885.png)
+
+放行以后，由于抛出的是**消息转换异常**，因此Spring会自动返回`reject`，所以消息依然会被删除：
+
+![image-20240605154147093](http://img.balance.wiki//blog/image-20240605154147093.png)
+
+我们将异常改为RuntimeException类型：
+
+```Java
+@RabbitListener(queues = "simple.queue")
+public void listenSimpleQueueMessage(String msg) throws InterruptedException {
+    log.info("spring 消费者接收到消息：【" + msg + "】");
+    if (true) {
+        throw new RuntimeException("故意的");
+    }
+    log.info("消息处理完成");
+}
+```
+
+放行以后，由于抛出的是业务异常，所以Spring返回`ack`，最终消息恢复至`Ready`状态，并且没有被RabbitMQ删除
+
+![image-20240605154246530](http://img.balance.wiki//blog/image-20240605154246530.png)
+
+当我们把配置改为`auto`时，消息处理失败后，会回到RabbitMQ，并重新投递到消费者。
+
+#### 失败重试机制
+
+当消费者出现异常后，消息会不断requeue（重入队）到队列，再重新发送给消费者。如果消费者再次执行依然出错，消息会再次requeue到队列，再次投递，直到消息处理成功为止。
+
+**极端情况就是消费者一直无法执行成功，那么消息requeue就会无限循环，导致mq的消息处理飙升，带来不必要的压力：**
+
+为了应对上述情况**Spring又提供了消费者失败重试机制**：在消费者出现异常时利用本地重试，而不是无限制的requeue到mq队列。
+
+修改consumer服务的application.yml文件，添加内容：
+
+```YAML
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        retry:
+          enabled: true # 开启消费者失败重试
+          initial-interval: 1000ms # 初识的失败等待时长为1秒
+          multiplier: 1 # 失败的等待时长倍数，下次等待时长 = multiplier * last-interval
+          max-attempts: 3 # 最大重试次数
+          stateless: true # true无状态；false有状态。如果业务中包含事务，这里改为false
+```
+
+重启consumer服务，重复之前的测试。可以发现：
+
+- 消费者在失败后消息没有重新回到MQ无限重新投递，而是在**本地重试**了3次
+- 本地重试3次以后，抛出了`AmqpRejectAndDontRequeueException`异常。查看RabbitMQ控制台，发现消息被删除了，说明最后SpringAMQP返回的是`reject`
+
+结论：
+
+- 开启本地重试时，消息处理过程中抛出异常，不会requeue到队列，而是在**消费者本地重试**
+- 重试达到最大次数后，Spring会返回reject，消息会被丢弃
+
+> 这里的重试是指在本地重试！！！！！
+
+#### 失败处理策略-重试后
+
+在之前的测试中，本地测试达到最大重试次数后，消息会被丢弃。这在某些对于消息可靠性要求较高的业务场景下，显然不太合适了。
+
+因此Spring允许我们自定义重试次数耗尽后的消息处理策略，这个策略是由`MessageRecovery`接口来定义的，它有3个不同实现：
+
+-  `RejectAndDontRequeueRecoverer`：重试耗尽后，直接`reject`，丢弃消息。默认就是这种方式 
+-  `ImmediateRequeueMessageRecoverer`：重试耗尽后，返回`nack`，消息重新入队 
+-  `RepublishMessageRecoverer`：重试耗尽后，将失败消息投递到指定的交换机 
+
+比较优雅的一种处理方案是`RepublishMessageRecoverer`，失败后将消息投递到一个指定的，专门存放异常消息的队列，后续由人工集中处理。
+
+1）在consumer服务中定义处理失败消息的交换机和队列
+
+```Java
+@Bean
+public DirectExchange errorMessageExchange(){
+    return new DirectExchange("error.direct");
+}
+@Bean
+public Queue errorQueue(){
+    return new Queue("error.queue", true);
+}
+@Bean
+public Binding errorBinding(Queue errorQueue, DirectExchange errorMessageExchange){
+    return BindingBuilder.bind(errorQueue).to(errorMessageExchange).with("error");
+}
+```
+
+2）定义一个RepublishMessageRecoverer，关联队列和交换机
+
+```Java
+@Bean
+public MessageRecoverer republishMessageRecoverer(RabbitTemplate rabbitTemplate){
+    return new RepublishMessageRecoverer(rabbitTemplate, "error.direct", "error");
+}
+```
+
+完整代码如下：
+
+```Java
+package com.itheima.consumer.config;
+
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.retry.MessageRecoverer;
+import org.springframework.amqp.rabbit.retry.RepublishMessageRecoverer;
+import org.springframework.context.annotation.Bean;
+
+@Configuration
+@ConditionalOnProperty(name = "spring.rabbitmq.listener.simple.retry.enabled", havingValue = "true")
+public class ErrorMessageConfig {
+    @Bean
+    public DirectExchange errorMessageExchange(){
+        return new DirectExchange("error.direct");
+    }
+    @Bean
+    public Queue errorQueue(){
+        return new Queue("error.queue", true);
+    }
+    @Bean
+    public Binding errorBinding(Queue errorQueue, DirectExchange errorMessageExchange){
+        return BindingBuilder.bind(errorQueue).to(errorMessageExchange).with("error");
+    }
+
+    @Bean
+    public MessageRecoverer republishMessageRecoverer(RabbitTemplate rabbitTemplate){
+        return new RepublishMessageRecoverer(rabbitTemplate, "error.direct", "error");
+    }
+}
+```
+
+#### 业务幂等性-重复处理
+
+何为幂等性？
+
+**幂等**是一个数学概念，用函数表达式来描述是这样的：`f(x) = f(f(x))`，例如求绝对值函数。
+
+在程序开发中，则是指同一个业务，执行一次或多次对业务状态的影响是一致的。例如：
+
+- 根据id删除数据
+- 查询数据
+- 新增数据
+
+但数据的更新往往不是幂等的，如果重复执行可能造成不一样的后果。比如：
+
+- 取消订单，恢复库存的业务。如果多次恢复就会出现库存重复增加的情况
+- 退款业务。重复退款对商家而言会有经济损失。
+
+我们在用户支付成功后会发送MQ消息到交易服务，修改订单状态为已支付，就可能出现消息重复投递的情况。如果消费者不做判断，**很有可能导致消息被消费多次，出现业务故障。**
+
+举例：
+
+1. 假如用户刚刚支付完成，并且投递消息到交易服务，交易服务更改订单为**已支付**状态。
+2. 由于某种原因，例如网络故障导致生产者没有得到确认，隔了一段时间后**重新投递**给交易服务。
+3. 但是，在新投递的消息被消费之前，用户选择了退款，将订单状态改为了**已退款**状态。
+4. 退款完成后，新投递的消息才被消费，那么订单状态会被再次改为**已支付**。业务异常。
+
+**因此，我们必须想办法保证消息处理的幂等性。这里给出两种方案：**
+
+- **唯一消息ID**
+- **业务状态判断**
+
+##### 唯一消息ID
+
+这个思路非常简单：
+
+1. 每一条消息都生成一个唯一的id，与消息一起投递给消费者。
+2. 消费者接收到消息后处理自己的业务，业务处理成功后**将消息ID保存到数据库**
+3. 如果下次又收到相同消息，去数据库查询判断是否存在，存在则为重复消息放弃处理。
+
+我们该如何给消息添加唯一ID呢？
+
+其实很简单，SpringAMQP的`MessageConverter`自带了`MessageID`的功能，我们只要开启这个功能即可。
+
+以Jackson的消息转换器为例：
+
+```java
+@Bean
+public MessageConverter messageConverter(){
+    // 1.定义消息转换器
+    Jackson2JsonMessageConverter jjmc = new Jackson2JsonMessageConverter();
+    // 2.配置自动创建消息id，用于识别不同消息，也可以在业务中基于ID判断是否是重复消息
+    jjmc.setCreateMessageIds(true);
+    return jjmc;
+}
+```
+
+##### 业务判断
+
+业务判断就是基于业务本身的逻辑或状态来判断是否是重复的请求或消息，不同的业务场景判断的思路也不一样。
+
+例如我们当前案例中，处理消息的业务逻辑是把订单状态从未支付修改为已支付。因此我们就可以在执行业务时判断订单状态是否是未支付，如果不是则证明订单已经被处理过，无需重复处理。
+
+相比较而言，消息ID的方案需要改造原有的数据库，所以我更推荐使用业务判断的方案。
+
+以支付修改订单的业务为例，我们需要修改`OrderServiceImpl`中的`markOrderPaySuccess`方法：
+
+```Java
+    @Override
+    public void markOrderPaySuccess(Long orderId) {
+        // 1.查询订单
+        Order old = getById(orderId);
+        // 2.判断订单状态
+        if (old == null || old.getStatus() != 1) {
+            // 订单不存在或者订单状态不是1，放弃处理
+            return;
+        }
+        // 3.尝试更新订单
+        Order order = new Order();
+        order.setId(orderId);
+        order.setStatus(2);
+        order.setPayTime(LocalDateTime.now());
+        updateById(order);
+    }
+```
+
+上述代码逻辑上符合了幂等判断的需求，但是由于判断和更新是两步动作，因此在极小概率下可能存在线程安全问题。
+
+我们可以合并上述操作为这样：
+
+```Java
+@Override
+public void markOrderPaySuccess(Long orderId) {
+    // UPDATE `order` SET status = ? , pay_time = ? WHERE id = ? AND status = 1
+    lambdaUpdate()
+            .set(Order::getStatus, 2)
+            .set(Order::getPayTime, LocalDateTime.now())
+            .eq(Order::getId, orderId)
+            .eq(Order::getStatus, 1)
+            .update();
+}
+```
+
+注意看，上述代码等同于这样的SQL语句：
+
+```SQL
+UPDATE `order` SET status = ? , pay_time = ? WHERE id = ? AND status = 1
+```
+
+我们在where条件中除了判断id以外，还加上了status必须为1的条件。如果条件不符（说明订单已支付），则SQL匹配不到数据，根本不会执行。
+
+#### 兜底方案
+
+虽然我们利用各种机制尽可能增加了消息的可靠性，但也不好说能保证消息100%的可靠。万一真的MQ通知失败该怎么办呢？
+
+有没有其它兜底方案，能够确保订单的支付状态一致呢？
+
+其实思想很简单：既然MQ通知不一定发送到交易服务，那么交易服务就必须自己**主动去查询**支付状态。这样即便支付服务的MQ通知失败，我们依然能通过主动查询来保证订单状态的一致。
+
+> 双向查询！
+
+流程如下：
+
+![image-20240605164521374](http://img.balance.wiki//blog/image-20240605164521374.png)
+
+图中黄色线圈起来的部分就是MQ通知失败后的兜底处理方案，由交易服务自己主动去查询支付状态。
+
+不过需要注意的是，交易服务并不知道用户会在什么时候支付，如果查询的时机不正确（比如查询的时候用户正在支付中），可能查询到的支付状态也不正确。
+
+那么**问题来了，我们到底该在什么时间主动查询支付状态呢？**
+
+这个时间是无法确定的，因此，通常我们采取的措施就是利用**定时任务**定期查询，例如每隔20秒就查询一次，并判断支付状态。如果发现订单已经支付，则立刻更新订单状态为已支付即可。
+
+> 至此，消息可靠性的问题已经解决了。
+>
+> 综上，支付服务与交易服务之间的订单状态一致性是如何保证的？
+>
+> - 首先，支付服务会正在用户支付成功以后利用MQ消息通知交易服务，完成订单状态同步。
+> - 其次，为了保证MQ消息的可靠性，我们采用了生产者确认机制、消费者确认、消费者失败重试等策略，确保消息投递的可靠性
+> - 最后，我们还在交易服务设置了定时任务，定期查询订单支付状态。这样即便MQ通知失败，还可以利用定时任务作为兜底方案，确保订单支付状态的最终一致性。
+
+### 延迟消息
 
 
 
+#### 死信交换机
 
 
 
+#### 延迟消息插件
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#### 实战-延迟消息
 
