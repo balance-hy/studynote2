@@ -541,6 +541,9 @@ public class RestFulController {
 @PutMapping
 @DeleteMapping
 @PatchMapping
+
+如果你需要创建一个新资源，并且服务器将决定新资源的URI，使用POST。
+如果你知道资源的URI，并且需要创建或更新该资源，使用PUT。
 ```
 
 比如上述例子 就可以改写成以下代码，路径依旧为 http://localhost:8080/test/1/2
